@@ -120,6 +120,14 @@ export interface SeerRequest {
   id: number;
   status: number;
   type: MediaType;
+  title?: string;
+  originalTitle?: string;
+  posterPath?: string | null;
+  backdropPath?: string | null;
+  overview?: string | null;
+  releaseDate?: string | null;
+  voteAverage?: number;
+  genres?: Genre[];
   media: {
     id: number;
     tmdbId: number;
@@ -133,6 +141,19 @@ export interface SeerRequest {
   };
   createdAt: string;
   updatedAt: string;
+}
+
+export interface SeerMediaStatus {
+  id?: number;
+  tmdbId: number;
+  status: number;
+  statusName: 'unknown' | 'pending' | 'processing' | 'partially_available' | 'available';
+  requested: boolean;
+  requestId?: number;
+  requestedBy?: string | null;
+  requestedById?: number | null;
+  requestedAt?: string | null;
+  serviceId?: number;
 }
 
 export interface ArrStatus {

@@ -6,7 +6,7 @@ import { MediaCard } from '../components/MediaCard';
 
 const PLATFORMS = [
   { id: 8, name: 'Netflix', color: 'from-red-600 to-rose-700', border: 'border-red-500/40' },
-  { id: 9, name: 'Prime Video', color: 'from-sky-500 to-blue-600', border: 'border-blue-400/40' },
+  { id: 119, name: 'Prime Video', color: 'from-sky-500 to-blue-600', border: 'border-blue-400/40' },
   { id: 337, name: 'Disney+', color: 'from-indigo-600 to-blue-800', border: 'border-indigo-400/40' },
   { id: 283, name: 'Crunchyroll', color: 'from-amber-500 to-orange-600', border: 'border-orange-500/40' },
   { id: 350, name: 'Apple TV+', color: 'from-slate-400 to-slate-600', border: 'border-slate-400/40' },

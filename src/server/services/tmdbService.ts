@@ -211,15 +211,38 @@ export class TMDBService {
     mediaType: 'movie' | 'tv',
     providerId: number,
     genreId?: number,
-    page: number = 1
+    page: number = 1,
+    recentOnly: boolean = false
   ): Promise<{ results: TMDBMediaItem[]; total_pages: number }> {
+    // En France, Amazon Prime Video utilise principalement le provider ID 119 (et 9 pour Amazon Video/US)
+    let providerString = providerId.toString();
+    if (providerId === 9 || providerId === 119) {
+      providerString = '119|9';
+    }
+
     const params: Record<string, string> = {
       watch_region: 'FR',
-      with_watch_providers: providerId.toString(),
-      sort_by: 'popularity.desc',
+      with_watch_providers: providerString,
+      with_watch_monetization_types: 'flatrate|free|ads',
+      sort_by: recentOnly ? 'primary_release_date.desc' : 'popularity.desc',
       page: page.toString(),
-      'vote_count.gte': '30',
+      'vote_count.gte': recentOnly ? '5' : '20',
     };
+
+    // Si on recherche des sorties récentes du moment (18 derniers mois jusqu'aux prochaines semaines)
+    if (recentOnly) {
+      const eighteenMonthsAgo = new Date(Date.now() - 540 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+      const nextMonth = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+      if (mediaType === 'movie') {
+        params['primary_release_date.gte'] = eighteenMonthsAgo;
+        params['primary_release_date.lte'] = nextMonth;
+        params.sort_by = 'popularity.desc';
+      } else {
+        params['first_air_date.gte'] = eighteenMonthsAgo;
+        params['first_air_date.lte'] = nextMonth;
+        params.sort_by = 'popularity.desc';
+      }
+    }
 
     if (genreId) {
       params.with_genres = genreId.toString();
@@ -234,20 +257,84 @@ export class TMDBService {
   }
 
   /**
-   * Découvrir des Animés / Mangas
+   * Découvrir des Animés / Mangas (vrais animés japonais, filtrés pour exclure les dessins animés pour enfants)
    */
-  public static async discoverAnime(page: number = 1): Promise<{ results: TMDBMediaItem[]; total_pages: number }> {
-    const data = await this.request<{ results: any[]; total_pages: number }>('/discover/tv', {
+  public static async discoverAnime(
+    type: 'tv' | 'movie' | 'all' = 'tv',
+    page: number = 1
+  ): Promise<{ results: TMDBMediaItem[]; total_pages: number }> {
+    const endpoint = type === 'movie' ? '/discover/movie' : '/discover/tv';
+    
+    // Exclusion des genres enfants (10762 = Kids pour TV, 10751 = Family)
+    const withoutGenres = type === 'movie' ? '10751' : '10762,10751';
+
+    const data = await this.request<{ results: any[]; total_pages: number }>(endpoint, {
       with_genres: '16', // Animation
       with_original_language: 'ja',
+      without_genres: withoutGenres,
       sort_by: 'popularity.desc',
       page: page.toString(),
-      'vote_count.gte': '20',
+      'vote_count.gte': '15',
+    });
+
+    const targetType = type === 'movie' ? 'movie' : 'tv';
+    return {
+      results: data.results.map((item) => this.normalizeMedia({ ...item, media_type: targetType })),
+      total_pages: data.total_pages,
+    };
+  }
+
+  /**
+   * Obtenir les prochaines sorties (style calendrier Sonarr/Radarr)
+   */
+  public static async getUpcomingReleases(
+    type: 'all' | 'movie' | 'tv' = 'all',
+    page: number = 1
+  ): Promise<{ results: TMDBMediaItem[]; total_pages: number }> {
+    const results: TMDBMediaItem[] = [];
+
+    if (type === 'all' || type === 'movie') {
+      try {
+        const moviesData = await this.request<{ results: any[] }>('/movie/upcoming', {
+          region: 'FR',
+          page: page.toString(),
+        });
+        const normalizedMovies = (moviesData.results || []).map((m) =>
+          this.normalizeMedia({ ...m, media_type: 'movie' })
+        );
+        results.push(...normalizedMovies);
+      } catch {}
+    }
+
+    if (type === 'all' || type === 'tv') {
+      try {
+        const tvData = await this.request<{ results: any[] }>('/tv/on_the_air', {
+          page: page.toString(),
+        });
+        const normalizedTv = (tvData.results || []).map((t) =>
+          this.normalizeMedia({ ...t, media_type: 'tv' })
+        );
+        results.push(...normalizedTv);
+      } catch {}
+    }
+
+    // Filtrer pour ne garder que les sorties >= à il y a 7 jours
+    const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+    const upcomingFiltered = results.filter((item) => {
+      const d = item.release_date;
+      return d && d >= sevenDaysAgo;
+    });
+
+    // Trier chronologiquement (de la sortie la plus proche à la plus lointaine)
+    upcomingFiltered.sort((a, b) => {
+      const da = a.release_date || '9999';
+      const db = b.release_date || '9999';
+      return da.localeCompare(db);
     });
 
     return {
-      results: data.results.map((item) => this.normalizeMedia({ ...item, media_type: 'tv' })),
-      total_pages: data.total_pages,
+      results: upcomingFiltered,
+      total_pages: 5,
     };
   }
 

@@ -1,4 +1,4 @@
-import { MediaItem, WatchedItem, WatchlistItem, RecommendationResponse, UserStats, User, SeerRequest, ArrStatus } from '../types';
+import { MediaItem, WatchedItem, WatchlistItem, RecommendationResponse, UserStats, User, SeerRequest, SeerMediaStatus, ArrStatus } from '../types';
 
 const API_BASE = '/api';
 
@@ -81,14 +81,16 @@ export const api = {
     request<{ results: MediaItem[]; page: number; total_pages: number }>(`/tmdb/search?q=${encodeURIComponent(query)}&page=${page}`),
   getMediaDetails: (mediaType: 'movie' | 'tv', id: number) =>
     request<MediaItem>(`/tmdb/${mediaType}/${id}`),
+  getUpcomingMedia: (type: 'all' | 'movie' | 'tv' = 'all', page: number = 1) =>
+    request<{ results: MediaItem[]; total_pages: number }>(`/tmdb/upcoming?type=${type}&page=${page}`),
   discoverByGenre: (type: 'movie' | 'tv', genreId: number, page: number = 1) =>
     request<{ results: MediaItem[]; total_pages: number }>(`/tmdb/discover?type=${type}&genreId=${genreId}&page=${page}`),
-  discoverByProvider: (type: 'movie' | 'tv', providerId: number, genreId?: number, page: number = 1) =>
+  discoverByProvider: (type: 'movie' | 'tv', providerId: number, genreId?: number, page: number = 1, recentOnly: boolean = false) =>
     request<{ results: MediaItem[]; total_pages: number }>(
-      `/tmdb/providers/discover?type=${type}&providerId=${providerId}${genreId ? `&genreId=${genreId}` : ''}&page=${page}`
+      `/tmdb/providers/discover?type=${type}&providerId=${providerId}${genreId ? `&genreId=${genreId}` : ''}&page=${page}&recentOnly=${recentOnly}`
     ),
-  discoverAnime: (page: number = 1) =>
-    request<{ results: MediaItem[]; total_pages: number }>(`/tmdb/anime?page=${page}`),
+  discoverAnime: (type: 'tv' | 'movie' | 'all' = 'tv', page: number = 1) =>
+    request<{ results: MediaItem[]; total_pages: number }>(`/tmdb/anime?type=${type}&page=${page}`),
 
   // ==================== WATCH TRACKING ====================
   markAsWatched: (payload: {
@@ -143,13 +145,17 @@ export const api = {
   // ==================== SEER (OVERSEERR) ====================
   getSeerStatus: () => request<{ configured: boolean; connected: boolean; message: string; version?: string }>('/seer/status'),
   checkSeerStatus: (mediaType: 'movie' | 'tv', tmdbId: number) =>
-    request<{ tmdbId: number; status: number; statusName: string; requested: boolean }>(`/seer/check/${mediaType}/${tmdbId}`),
-  getSeerRequests: (take: number = 20, skip: number = 0, filter: string = 'all') =>
+    request<SeerMediaStatus>(`/seer/check/${mediaType}/${tmdbId}`),
+  getSeerRequests: (take: number = 30, skip: number = 0, filter: string = 'all') =>
     request<{ pageInfo: any; results: SeerRequest[] }>(`/seer/requests?take=${take}&skip=${skip}&filter=${filter}`),
   requestOnSeer: (payload: { mediaType: 'movie' | 'tv'; mediaId: number; seasons?: number[] | 'all'; is4k?: boolean }) =>
     request<{ success: boolean; message: string }>('/seer/request', {
       method: 'POST',
       body: JSON.stringify(payload),
+    }),
+  deleteSeerRequest: (requestId: number) =>
+    request<{ success: boolean; message: string }>(`/seer/request/${requestId}`, {
+      method: 'DELETE',
     }),
 
   // ==================== SONARR & RADARR ====================

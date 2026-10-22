@@ -40,8 +40,8 @@ export const MediaModal: React.FC<MediaModalProps> = ({
   const [arrStatus, setArrStatus] = useState<any>(null);
   const [jellyfinItem, setJellyfinItem] = useState<{ inJellyfin: boolean; itemId?: string; name?: string } | null>(null);
   const [requestingSeer, setRequestingSeer] = useState<boolean>(false);
+  const [cancellingSeer, setCancellingSeer] = useState<boolean>(false);
   const [showTrailer, setShowTrailer] = useState<boolean>(false);
-  const [is4k, setIs4k] = useState<boolean>(false);
 
   useEffect(() => {
     if (isOpen && id) {
@@ -92,7 +92,7 @@ export const MediaModal: React.FC<MediaModalProps> = ({
       await api.requestOnSeer({
         mediaType,
         mediaId: item.id,
-        is4k,
+        is4k: false,
         seasons: 'all',
       });
       // Rafraîchir le statut Seer
@@ -103,6 +103,22 @@ export const MediaModal: React.FC<MediaModalProps> = ({
       alert(err.message || 'Erreur lors de la demande Seer');
     } finally {
       setRequestingSeer(false);
+    }
+  };
+
+  const handleCancelSeerRequest = async () => {
+    if (!seerStatus?.requestId) return;
+    if (!confirm('Voulez-vous vraiment annuler cette demande Seer ?')) return;
+    setCancellingSeer(true);
+    try {
+      await api.deleteSeerRequest(seerStatus.requestId);
+      const updated = await api.checkSeerStatus(mediaType, id);
+      setSeerStatus(updated);
+      alert('Demande annulée avec succès.');
+    } catch (err: any) {
+      alert(err.message || 'Erreur lors de l\'annulation de la demande');
+    } finally {
+      setCancellingSeer(false);
     }
   };
 
@@ -190,6 +206,11 @@ export const MediaModal: React.FC<MediaModalProps> = ({
                       <span className="flex items-center gap-1 text-xs text-slate-400">
                         <Calendar className="w-3.5 h-3.5" />
                         {new Date(item.release_date).getFullYear()}
+                      </span>
+                    )}
+                    {item.release_date && new Date(item.release_date).getTime() > Date.now() && (
+                      <span className="flex items-center gap-1 text-xs font-bold px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                        <span>⏳ Sortie le {new Date(item.release_date).toLocaleDateString('fr-FR')} (dans {Math.ceil((new Date(item.release_date).getTime() - Date.now()) / (1000 * 60 * 60 * 24))} jours)</span>
                       </span>
                     )}
                     {item.runtime && (
@@ -287,8 +308,8 @@ export const MediaModal: React.FC<MediaModalProps> = ({
                 </div>
 
                 {/* Right: Server / Seer Request Button / Jellyfin Direct App */}
-                <div className="flex items-center gap-2">
-                  {/* Si déjà présent sur le serveur (Sonarr/Radarr/Jellyfin/Seer Disponible) : INTERDIRE demande Seer */}
+                <div className="flex flex-wrap items-center gap-2">
+                  {/* CAS 1: Présent sur le serveur (Sonarr/Radarr/Jellyfin/Seer Disponible) */}
                   {Boolean((arrStatus?.inLibrary && arrStatus?.downloaded) || seerStatus?.status === 5 || jellyfinItem?.inJellyfin) ? (
                     <div className="flex items-center gap-2">
                       <span className="flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-xl bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
@@ -308,31 +329,48 @@ export const MediaModal: React.FC<MediaModalProps> = ({
                         </a>
                       )}
                     </div>
-                  ) : seerStatus?.status === 3 ? (
-                    <span className="flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-xl bg-amber-500/20 text-amber-400 border border-amber-500/30">
-                      <HardDrive className="w-4 h-4 animate-pulse" />
-                      Téléchargement en cours
-                    </span>
-                  ) : (
-                    <div className="flex items-center gap-2">
-                      <label className="text-[11px] text-slate-400 flex items-center gap-1 cursor-pointer">
-                        <input
-                          type="checkbox"
-                          checked={is4k}
-                          onChange={(e) => setIs4k(e.target.checked)}
-                          className="rounded border-slate-700 bg-dark-900 text-primary-600 focus:ring-0"
-                        />
-                        <span>4K</span>
-                      </label>
-                      <button
-                        onClick={handleRequestSeer}
-                        disabled={requestingSeer}
-                        className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-gradient-to-r from-accent-cinema to-pink-600 hover:from-accent-cinema/90 hover:to-pink-500 text-white text-xs font-semibold shadow-glow-cinema transition-transform hover:scale-105 disabled:opacity-50"
-                      >
-                        <CloudDownload className="w-4 h-4" />
-                        <span>{requestingSeer ? 'Envoi...' : 'Demander sur Seer'}</span>
-                      </button>
+                  ) : Boolean(seerStatus?.requested || seerStatus?.status === 2 || seerStatus?.status === 3) ? (
+                    /* CAS 2: Déjà demandé sur Seer (en attente ou en cours de téléchargement) */
+                    <div className="flex flex-wrap items-center gap-2">
+                      <div className="flex items-center gap-2">
+                        {seerStatus?.status === 3 ? (
+                          <span className="flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-xl bg-amber-500/20 text-amber-400 border border-amber-500/30">
+                            <HardDrive className="w-4 h-4 animate-pulse" />
+                            Téléchargement en cours
+                          </span>
+                        ) : (
+                          <span className="flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-xl bg-primary-500/20 text-primary-400 border border-primary-500/30">
+                            <Clock className="w-4 h-4" />
+                            En attente d'approbation
+                          </span>
+                        )}
+                        {seerStatus?.requestedBy && (
+                          <span className="text-xs text-slate-400">
+                            (Demandé par <strong className="text-slate-200">{seerStatus.requestedBy}</strong>)
+                          </span>
+                        )}
+                      </div>
+
+                      {seerStatus?.requestId && (
+                        <button
+                          onClick={handleCancelSeerRequest}
+                          disabled={cancellingSeer}
+                          className="px-3 py-1.5 rounded-xl bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 border border-rose-500/30 text-xs font-semibold transition-colors disabled:opacity-50"
+                        >
+                          {cancellingSeer ? 'Annulation...' : 'Annuler la demande'}
+                        </button>
+                      )}
                     </div>
+                  ) : (
+                    /* CAS 3: Pas encore sur le serveur ni demandé -> Bouton de demande propre (sans 4K) */
+                    <button
+                      onClick={handleRequestSeer}
+                      disabled={requestingSeer}
+                      className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-gradient-to-r from-accent-cinema to-pink-600 hover:from-accent-cinema/90 hover:to-pink-500 text-white text-xs font-semibold shadow-glow-cinema transition-transform hover:scale-105 disabled:opacity-50"
+                    >
+                      <CloudDownload className="w-4 h-4" />
+                      <span>{requestingSeer ? 'Envoi...' : 'Demander sur Seer'}</span>
+                    </button>
                   )}
                 </div>
               </div>

@@ -6,7 +6,7 @@ import { RatingModal } from './components/RatingModal';
 import { SearchModal } from './components/SearchModal';
 import { Dashboard } from './pages/Dashboard';
 import { Discover } from './pages/Discover';
-import { Platforms } from './pages/Platforms';
+import { Calendar } from './pages/Calendar';
 import { WatchedHistory } from './pages/WatchedHistory';
 import { Watchlist } from './pages/Watchlist';
 import { SeerRequests } from './pages/SeerRequests';
@@ -141,8 +141,16 @@ const AppContent: React.FC = () => {
           />
         )}
 
+        {currentTab === 'calendar' && (
+          <Calendar
+            onSelectMedia={handleSelectMedia}
+            onOpenRating={handleOpenRating}
+            onToggleWatchlist={handleToggleWatchlist}
+          />
+        )}
+
         {currentTab === 'platforms' && (
-          <Platforms
+          <Discover
             onSelectMedia={handleSelectMedia}
             onOpenRating={handleOpenRating}
             onToggleWatchlist={handleToggleWatchlist}

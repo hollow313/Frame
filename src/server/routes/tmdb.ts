@@ -114,20 +114,12 @@ router.get('/search', async (req: AuthenticatedRequest, res: Response) => {
   }
 });
 
-// Découvrir par plateforme de streaming (Netflix, Prime, Disney+, Crunchyroll, etc.)
-router.get('/providers/discover', async (req: AuthenticatedRequest, res: Response) => {
+// Prochaines sorties (Calendrier style Sonarr)
+router.get('/upcoming', async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const mediaType = (req.query.type as 'movie' | 'tv') || 'movie';
-    const providerId = parseInt(req.query.providerId as string, 10);
-    const genreId = req.query.genreId ? parseInt(req.query.genreId as string, 10) : undefined;
+    const type = (req.query.type as 'all' | 'movie' | 'tv') || 'all';
     const page = parseInt(req.query.page as string, 10) || 1;
-
-    if (!providerId) {
-      res.status(400).json({ error: 'providerId requis' });
-      return;
-    }
-
-    const data = await TMDBService.discoverByProvider(mediaType, providerId, genreId, page);
+    const data = await TMDBService.getUpcomingReleases(type, page);
     data.results = annotateWithUserData(data.results, req.user?.id);
     res.json(data);
   } catch (err: any) {
@@ -135,11 +127,34 @@ router.get('/providers/discover', async (req: AuthenticatedRequest, res: Respons
   }
 });
 
-// Découvrir les Animés & Mangas
+// Découvrir par plateforme de streaming (Netflix, Prime, Disney+, Crunchyroll, etc.)
+router.get('/providers/discover', async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const mediaType = (req.query.type as 'movie' | 'tv') || 'movie';
+    const providerId = parseInt(req.query.providerId as string, 10);
+    const genreId = req.query.genreId ? parseInt(req.query.genreId as string, 10) : undefined;
+    const page = parseInt(req.query.page as string, 10) || 1;
+    const recentOnly = req.query.recentOnly === 'true';
+
+    if (!providerId) {
+      res.status(400).json({ error: 'providerId requis' });
+      return;
+    }
+
+    const data = await TMDBService.discoverByProvider(mediaType, providerId, genreId, page, recentOnly);
+    data.results = annotateWithUserData(data.results, req.user?.id);
+    res.json(data);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Découvrir les Animés & Mangas (exclut les dessins animés pour enfants)
 router.get('/anime', async (req: AuthenticatedRequest, res: Response) => {
   try {
     const page = parseInt(req.query.page as string, 10) || 1;
-    const data = await TMDBService.discoverAnime(page);
+    const type = (req.query.type as 'tv' | 'movie' | 'all') || 'tv';
+    const data = await TMDBService.discoverAnime(type, page);
     data.results = annotateWithUserData(data.results, req.user?.id);
     res.json(data);
   } catch (err: any) {

@@ -28,8 +28,9 @@
 - 👁️ **Suivi des Déjà Vus & Liste à Voir** : Notez vos films sur 10 étoiles, ajoutez une critique personnelle, tenez un journal de vos visionnages et gérez votre watchlist d'un clic.
 - 🔄 **Synchronisation Simkl** : Importez et synchronisez automatiquement votre historique de visionnage et vos listes de films/séries Simkl vers Frame.
 - ☁️ **Intégration Overseerr / Jellyseerr ("Seer")** :
-  - **Bidirectionnel** : Visualisez l'état des téléchargements et des disponibilités sur votre serveur.
-  - **Demande directe 1-clic** : Demandez de nouveaux films ou séries (saisons complètes, option 4K) directement depuis Frame vers Seer.
+  - **Suivi visuel complet** : Liste des demandes enrichie avec affiches, vrais titres, date et demandeur.
+  - **Demande directe 1-clic & Annulation** : Demandez de nouveaux médias directement, ou annulez vos demandes en cours. Le bouton de demande disparaît automatiquement si le média est déjà disponible sur le serveur ou déjà demandé.
+- 📅 **Calendrier des Sorties (Style Sonarr / Radarr)** : Calendrier chronologique des prochaines sorties films et épisodes de séries à venir (cette semaine, semaine prochaine, ce mois-ci, watchlist), avec compte à rebours précis.
 - 📡 **Intégration Sonarr & Radarr** : Détection automatique des fichiers déjà présents sur les disques de votre serveur, état de téléchargement et taille des médias.
 - 👥 **Gestion Multi-utilisateurs** : Système d'authentification complet (JWT, hashage sécurisé bcrypt) avec rôles Administrateur et Membres. Chaque utilisateur dispose de son propre historique, de ses notes et de ses recommandations.
 - ⚡ **Ultra-léger & performant** : Conteneur Linux basé sur **Alpine**, consommant moins de 100 Mo de RAM, propulsé par Node.js 22 et SQLite intégré en mode WAL haute concurrence.
@@ -202,11 +203,13 @@ Chaque utilisateur peut personnaliser les types d'œuvres qu'il souhaite voir ap
 
 ---
 
-### 7. Sorties du moment par Plateforme de Streaming
+### 7. Explorer, Plateformes & Mangas
 
-Grâce à l'intégration JustWatch / TMDB :
-- L'onglet **Plateformes** permet de filtrer l'ensemble des films et séries du moment par service de streaming disponible en France (**Netflix, Prime Video, Disney+, Crunchyroll, Apple TV+, Canal+**), cumulable avec les filtres par genre.
-- Chaque fiche détaillée affiche les logos des plateformes sur lesquelles l'œuvre est disponible en visionnage.
+Tout est centralisé dans l'onglet **Découvrir** :
+- **Sorties récentes par Plateforme (SVOD)** : Filtrez par service de streaming disponible en France (**Netflix, Prime Video, Disney+, Crunchyroll, Apple TV+, Canal+**). L'option *« Sorties récentes du moment »* est activée par défaut pour afficher les vraies nouveautés et sorties récentes (2025-2026) au lieu de vieux titres.
+- **Mangas & Animés** : Sélection d'animation japonaise pour ados et adultes (les dessins animés pour jeunes enfants sont strictement exclus grâce au filtrage de genres).
+- **Par Genre** : Parcourez les films et séries par genre (Action, Science-Fiction, Drame, Horreur, etc.).
+- Chaque fiche détaillée affiche également les logos des plateformes sur lesquelles l'œuvre est disponible en visionnage en France.
 
 ---
 

@@ -42,6 +42,26 @@ app.use(cookieParser());
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
 
+// Journalisation des requêtes HTTP pour la visibilité des conteneurs
+app.use((req, res, next) => {
+  const start = Date.now();
+  const url = req.originalUrl || req.url;
+
+  // Ignorer les fichiers statiques pour ne pas surcharger les logs
+  if (url.startsWith('/assets') || url.endsWith('.ico') || url.endsWith('.png') || url.endsWith('.svg') || url.endsWith('.js') || url.endsWith('.css')) {
+    return next();
+  }
+
+  res.on('finish', () => {
+    const duration = Date.now() - start;
+    const status = res.statusCode;
+    const timestamp = new Date().toISOString().replace('T', ' ').substring(0, 19);
+    console.log(`[${timestamp}] [HTTP] ${req.method} ${url} -> ${status} (${duration}ms)`);
+  });
+
+  next();
+});
+
 // Middleware d'authentification SSO par en-têtes Reverse Proxy (si activé)
 app.use(ssoMiddleware);
 

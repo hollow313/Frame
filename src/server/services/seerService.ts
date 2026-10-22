@@ -6,6 +6,10 @@ export interface SeerMediaStatus {
   status: number; // 1 = UNKNOWN, 2 = PENDING, 3 = PROCESSING, 4 = PARTIALLY_AVAILABLE, 5 = AVAILABLE
   statusName: 'unknown' | 'pending' | 'processing' | 'partially_available' | 'available';
   requested: boolean;
+  requestId?: number;
+  requestedBy?: string | null;
+  requestedById?: number | null;
+  requestedAt?: string | null;
   serviceId?: number;
 }
 
@@ -85,17 +89,37 @@ export class SeerService {
         5: 'available',
       };
 
+      const firstReq = mediaInfo.requests && mediaInfo.requests.length > 0 ? mediaInfo.requests[0] : null;
+
       return {
         id: mediaInfo.id,
         tmdbId,
         status: mediaInfo.status || 1,
         statusName: statusMap[mediaInfo.status] || 'unknown',
-        requested: Boolean(mediaInfo.requests && mediaInfo.requests.length > 0),
+        requested: Boolean(firstReq),
+        requestId: firstReq?.id,
+        requestedBy: firstReq?.requestedBy?.displayName || firstReq?.requestedBy?.username || null,
+        requestedById: firstReq?.requestedBy?.id || null,
+        requestedAt: firstReq?.createdAt || null,
         serviceId: mediaInfo.serviceId,
       };
     } catch (err) {
       return { tmdbId, status: 1, statusName: 'unknown', requested: false };
     }
+  }
+
+  /**
+   * Annuler ou supprimer une demande sur Overseerr / Jellyseerr
+   */
+  public static async deleteRequest(requestId: number): Promise<boolean> {
+    if (!this.isConfigured()) {
+      throw new Error("Overseerr / Jellyseerr n'est pas configuré");
+    }
+
+    await this.request<any>(`/request/${requestId}`, {
+      method: 'DELETE',
+    });
+    return true;
   }
 
   /**
