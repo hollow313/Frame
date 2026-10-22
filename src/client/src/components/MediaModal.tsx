@@ -226,6 +226,28 @@ export const MediaModal: React.FC<MediaModalProps> = ({
                       </span>
                     ))}
                   </div>
+
+                  {/* Streaming Platforms (JustWatch FR) */}
+                  {item.streaming_providers && item.streaming_providers.length > 0 && (
+                    <div className="pt-2">
+                      <span className="text-[11px] font-semibold text-slate-400 block mb-1.5 uppercase tracking-wider">
+                        Disponible en streaming (France) :
+                      </span>
+                      <div className="flex flex-wrap items-center gap-2">
+                        {item.streaming_providers.map((p) => (
+                          <div
+                            key={p.id}
+                            className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-dark-850 border border-white/10 text-xs font-medium text-slate-200 shadow-sm"
+                          >
+                            {p.logo_path && (
+                              <img src={p.logo_path} alt={p.name} className="w-4 h-4 rounded object-cover" />
+                            )}
+                            <span>{p.name}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
 

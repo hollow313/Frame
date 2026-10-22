@@ -13,6 +13,7 @@ import {
   Menu, 
   X,
   Sparkles,
+  Layers,
   User as UserIcon
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
@@ -31,6 +32,7 @@ export const Navbar: React.FC<NavbarProps> = ({ currentTab, onSelectTab, onOpenS
   const navItems = [
     { id: 'dashboard', label: 'Accueil', icon: Sparkles },
     { id: 'discover', label: 'Découvrir', icon: Compass },
+    { id: 'platforms', label: 'Plateformes', icon: Layers },
     { id: 'movies', label: 'Films', icon: Film },
     { id: 'tv', label: 'Séries', icon: Tv },
     { id: 'watched', label: 'Déjà Vu', icon: CheckCircle2 },

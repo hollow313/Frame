@@ -5,6 +5,12 @@ export interface Genre {
   name: string;
 }
 
+export interface StreamingProvider {
+  id: number;
+  name: string;
+  logo_path: string | null;
+}
+
 export interface MediaItem {
   id: number;
   tmdb_id?: number;
@@ -28,10 +34,17 @@ export interface MediaItem {
   trailer_key?: string | null;
   cast?: { id: number; name: string; character: string; profile_path: string | null }[];
   director?: string | null;
+  streaming_providers?: StreamingProvider[];
+  buy_providers?: StreamingProvider[];
   isWatched?: boolean;
   userRating?: number | null;
   inWatchlist?: boolean;
   watchlistStatus?: string | null;
+}
+
+export interface HeroProposalItem extends MediaItem {
+  recommendationReason?: string;
+  categoryTag?: 'Film' | 'Série' | 'Animé / Manga';
 }
 
 export interface WatchedItem {
@@ -72,6 +85,7 @@ export interface RecommendationSection {
 
 export interface RecommendationResponse {
   hasEnoughData: boolean;
+  heroItems: HeroProposalItem[];
   topGenres: { id: number; name: string; count: number }[];
   sections: RecommendationSection[];
 }
@@ -91,7 +105,9 @@ export interface User {
   role: 'admin' | 'user';
   displayName: string;
   avatarUrl?: string;
+  authProvider?: 'local' | 'ldap' | 'sso';
   simklConnected?: boolean;
+  jellyfinConnected?: boolean;
   createdAt?: string;
 }
 

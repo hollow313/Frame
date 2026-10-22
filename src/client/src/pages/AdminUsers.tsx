@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Users, Shield, User as UserIcon, Trash2, Calendar, Film, Bookmark } from 'lucide-react';
+import { Users, Shield, User as UserIcon, Trash2, Calendar, Film, Bookmark, UserPlus, X, Check } from 'lucide-react';
 import { api } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 
@@ -7,6 +7,15 @@ export const AdminUsers: React.FC = () => {
   const { user: currentUser } = useAuth();
   const [users, setUsers] = useState<any[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
+
+  // Modal création utilisateur
+  const [createModalOpen, setCreateModalOpen] = useState(false);
+  const [newUsername, setNewUsername] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [newDisplayName, setNewDisplayName] = useState('');
+  const [newRole, setNewRole] = useState<'admin' | 'user'>('user');
+  const [createError, setCreateError] = useState<string | null>(null);
+  const [createSuccess, setCreateSuccess] = useState<string | null>(null);
 
   useEffect(() => {
     loadUsers();
@@ -21,6 +30,31 @@ export const AdminUsers: React.FC = () => {
       console.error(e);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleCreateUser = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setCreateError(null);
+    setCreateSuccess(null);
+    try {
+      const res = await api.adminCreateUser({
+        username: newUsername,
+        password: newPassword,
+        displayName: newDisplayName || undefined,
+        role: newRole,
+      });
+      setCreateSuccess(res.message);
+      setNewUsername('');
+      setNewPassword('');
+      setNewDisplayName('');
+      loadUsers();
+      setTimeout(() => {
+        setCreateModalOpen(false);
+        setCreateSuccess(null);
+      }, 1500);
+    } catch (err: any) {
+      setCreateError(err.message || 'Erreur lors de la création');
     }
   };
 
@@ -45,14 +79,24 @@ export const AdminUsers: React.FC = () => {
 
   return (
     <div className="max-w-4xl mx-auto space-y-6 pb-20">
-      <div>
-        <h1 className="text-2xl sm:text-3xl font-extrabold text-white tracking-tight flex items-center gap-2.5">
-          <Users className="w-7 h-7 text-primary-400" />
-          <span>Gestion des Utilisateurs</span>
-        </h1>
-        <p className="text-sm text-slate-400 mt-1">
-          Gérez les comptes autorisés à se connecter sur votre serveur Frame.
-        </p>
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div>
+          <h1 className="text-2xl sm:text-3xl font-extrabold text-white tracking-tight flex items-center gap-2.5">
+            <Users className="w-7 h-7 text-primary-400" />
+            <span>Gestion des Utilisateurs</span>
+          </h1>
+          <p className="text-sm text-slate-400 mt-1">
+            Gérez les comptes autorisés à se connecter sur votre serveur Frame.
+          </p>
+        </div>
+
+        <button
+          onClick={() => setCreateModalOpen(true)}
+          className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-primary-600 hover:bg-primary-500 text-white text-xs font-bold shadow-glow transition-all hover:scale-105 self-start sm:self-auto"
+        >
+          <UserPlus className="w-4 h-4" />
+          <span>Créer un utilisateur</span>
+        </button>
       </div>
 
       {loading ? (
@@ -125,6 +169,107 @@ export const AdminUsers: React.FC = () => {
               </div>
             );
           })}
+        </div>
+      )}
+
+      {/* Modal Créer Utilisateur */}
+      {createModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-dark-950/80 backdrop-blur-md animate-in fade-in duration-200">
+          <div 
+            className="w-full max-w-md bg-dark-900 border border-white/10 rounded-3xl p-6 shadow-2xl space-y-4"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between">
+              <h3 className="text-lg font-bold text-white flex items-center gap-2">
+                <UserPlus className="w-5 h-5 text-primary-400" />
+                <span>Nouveau compte utilisateur</span>
+              </h3>
+              <button
+                onClick={() => setCreateModalOpen(false)}
+                className="p-1 text-slate-400 hover:text-white"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {createError && (
+              <p className="text-xs text-rose-400 bg-rose-500/10 border border-rose-500/30 p-2.5 rounded-xl">
+                {createError}
+              </p>
+            )}
+
+            {createSuccess && (
+              <p className="text-xs text-emerald-400 bg-emerald-500/10 border border-emerald-500/30 p-2.5 rounded-xl flex items-center gap-2">
+                <Check className="w-4 h-4" />
+                <span>{createSuccess}</span>
+              </p>
+            )}
+
+            <form onSubmit={handleCreateUser} className="space-y-3 pt-1">
+              <div>
+                <label className="text-xs font-medium text-slate-300 block mb-1">Nom d'utilisateur (Identifiant)</label>
+                <input
+                  type="text"
+                  required
+                  value={newUsername}
+                  onChange={(e) => setNewUsername(e.target.value)}
+                  placeholder="Ex: marie"
+                  className="w-full bg-dark-850 border border-white/10 rounded-xl px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-primary-500"
+                />
+              </div>
+
+              <div>
+                <label className="text-xs font-medium text-slate-300 block mb-1">Nom d'affichage (Prénom / Pseudo)</label>
+                <input
+                  type="text"
+                  value={newDisplayName}
+                  onChange={(e) => setNewDisplayName(e.target.value)}
+                  placeholder="Ex: Marie Dupont"
+                  className="w-full bg-dark-850 border border-white/10 rounded-xl px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-primary-500"
+                />
+              </div>
+
+              <div>
+                <label className="text-xs font-medium text-slate-300 block mb-1">Mot de passe temporaire</label>
+                <input
+                  type="password"
+                  required
+                  value={newPassword}
+                  onChange={(e) => setNewPassword(e.target.value)}
+                  placeholder="Minimum 6 caractères"
+                  className="w-full bg-dark-850 border border-white/10 rounded-xl px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-primary-500"
+                />
+              </div>
+
+              <div>
+                <label className="text-xs font-medium text-slate-300 block mb-1">Rôle initial</label>
+                <select
+                  value={newRole}
+                  onChange={(e) => setNewRole(e.target.value as any)}
+                  className="w-full bg-dark-850 border border-white/10 rounded-xl px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-primary-500"
+                >
+                  <option value="user">Membre (Accès standard)</option>
+                  <option value="admin">Administrateur (Gestion intégrale)</option>
+                </select>
+              </div>
+
+              <div className="flex justify-end gap-2 pt-3">
+                <button
+                  type="button"
+                  onClick={() => setCreateModalOpen(false)}
+                  className="px-4 py-2 text-xs text-slate-400 hover:text-white"
+                >
+                  Annuler
+                </button>
+                <button
+                  type="submit"
+                  className="px-5 py-2 rounded-xl bg-primary-600 hover:bg-primary-500 text-white font-bold text-xs shadow"
+                >
+                  Créer le compte
+                </button>
+              </div>
+            </form>
+          </div>
         </div>
       )}
     </div>

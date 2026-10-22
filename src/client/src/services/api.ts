@@ -30,13 +30,6 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
     headers,
   });
 
-  if (res.status === 401) {
-    // Session expirée
-    if (window.location.pathname !== '/login') {
-      // Éviter boucle infinie
-    }
-  }
-
   const data = await res.json();
   if (!res.ok) {
     throw new Error(data.error || `Erreur serveur (${res.status})`);
@@ -47,14 +40,25 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
 
 export const api = {
   // ==================== AUTH ====================
-  getAuthStatus: () => request<{ initialized: boolean }>('/auth/status'),
+  getAuthStatus: () => request<{
+    initialized: boolean;
+    allowRegistration: boolean;
+    ldapEnabled: boolean;
+    ssoEnabled: boolean;
+    ssoUser?: User | null;
+  }>('/auth/status'),
   login: (credentials: { username: string; password: string }) =>
-    request<{ user: User; token: string; simklConnected?: boolean }>('/auth/login', {
+    request<{ user: User; token: string; simklConnected?: boolean; jellyfinConnected?: boolean }>('/auth/login', {
       method: 'POST',
       body: JSON.stringify(credentials),
     }),
   register: (payload: { username: string; password: string; displayName?: string }) =>
     request<{ user: User; token: string; message: string }>('/auth/register', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+  adminCreateUser: (payload: { username: string; password: string; displayName?: string; role: 'admin' | 'user' }) =>
+    request<{ success: boolean; message: string; user: User }>('/auth/admin/create-user', {
       method: 'POST',
       body: JSON.stringify(payload),
     }),
@@ -74,6 +78,12 @@ export const api = {
     request<MediaItem>(`/tmdb/${mediaType}/${id}`),
   discoverByGenre: (type: 'movie' | 'tv', genreId: number, page: number = 1) =>
     request<{ results: MediaItem[]; total_pages: number }>(`/tmdb/discover?type=${type}&genreId=${genreId}&page=${page}`),
+  discoverByProvider: (type: 'movie' | 'tv', providerId: number, genreId?: number, page: number = 1) =>
+    request<{ results: MediaItem[]; total_pages: number }>(
+      `/tmdb/providers/discover?type=${type}&providerId=${providerId}${genreId ? `&genreId=${genreId}` : ''}&page=${page}`
+    ),
+  discoverAnime: (page: number = 1) =>
+    request<{ results: MediaItem[]; total_pages: number }>(`/tmdb/anime?page=${page}`),
 
   // ==================== WATCH TRACKING ====================
   markAsWatched: (payload: {
@@ -87,6 +97,7 @@ export const api = {
     overview?: string | null;
     rating?: number | null;
     review?: string | null;
+    watchedAt?: string | null;
   }) => request<{ success: boolean; message: string }>('/media/watched', {
     method: 'POST',
     body: JSON.stringify(payload),
@@ -142,6 +153,12 @@ export const api = {
   checkRadarrMovie: (tmdbId: number) => request<ArrStatus>(`/sonarr/check/movie/${tmdbId}`),
 
   // ==================== SIMKL ====================
+  getSimklPin: () => request<{ user_code: string; verification_url: string; expires_in: number }>('/simkl/pin'),
+  checkSimklPin: (userCode: string) =>
+    request<{ authorized: boolean; message?: string }>('/simkl/pin/check', {
+      method: 'POST',
+      body: JSON.stringify({ userCode }),
+    }),
   linkSimkl: (accessToken: string) =>
     request<{ success: boolean; message: string }>('/simkl/link', {
       method: 'POST',
@@ -150,6 +167,16 @@ export const api = {
   unlinkSimkl: () => request<{ success: boolean; message: string }>('/simkl/unlink', { method: 'POST' }),
   syncSimkl: () => request<{ success: boolean; message: string; stats: any }>('/simkl/sync', { method: 'POST' }),
 
+  // ==================== JELLYFIN ====================
+  linkJellyfin: (credentials: { username: string; password: string }) =>
+    request<{ success: boolean; message: string; userId: string }>('/jellyfin/link', {
+      method: 'POST',
+      body: JSON.stringify(credentials),
+    }),
+  unlinkJellyfin: () => request<{ success: boolean; message: string }>('/jellyfin/unlink', { method: 'POST' }),
+  syncJellyfin: () => request<{ success: boolean; message: string; result: any }>('/jellyfin/sync', { method: 'POST' }),
+  getJellyfinNowPlaying: () => request<{ active: boolean; items: any[] }>('/jellyfin/now-playing'),
+
   // ==================== SETTINGS (ADMIN) ====================
   getSettings: () => request<Record<string, { configured: boolean; value?: string }>>('/settings'),
   updateSettings: (updates: Record<string, string>) =>
@@ -157,7 +184,7 @@ export const api = {
       method: 'PUT',
       body: JSON.stringify(updates),
     }),
-  testService: (service: 'tmdb' | 'seer' | 'sonarr' | 'radarr') =>
+  testService: (service: 'tmdb' | 'seer' | 'sonarr' | 'radarr' | 'ldap' | 'jellyfin') =>
     request<{ success: boolean; message: string }>('/settings/test', {
       method: 'POST',
       body: JSON.stringify({ service }),

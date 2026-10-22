@@ -1,19 +1,36 @@
-import React, { useState } from 'react';
-import { Film, Lock, User, Sparkles, AlertCircle } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { Film, Lock, User, Sparkles, AlertCircle, Shield, KeyRound } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
+import { api } from '../services/api';
 
 interface LoginProps {
   onSuccess: () => void;
 }
 
 export const Login: React.FC<LoginProps> = ({ onSuccess }) => {
-  const { login, register, isInitialized } = useAuth();
+  const { login, register, isInitialized, refreshUser } = useAuth();
+  const [allowRegistration, setAllowRegistration] = useState<boolean>(true);
+  const [ldapEnabled, setLdapEnabled] = useState<boolean>(false);
+  const [ssoEnabled, setSsoEnabled] = useState<boolean>(false);
   const [isRegistering, setIsRegistering] = useState(!isInitialized);
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [displayName, setDisplayName] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    api.getAuthStatus().then((status) => {
+      setAllowRegistration(status.allowRegistration);
+      setLdapEnabled(status.ldapEnabled);
+      setSsoEnabled(status.ssoEnabled);
+
+      // Si authentifié via en-tête SSO (Authelia / Reverse Proxy)
+      if (status.ssoUser) {
+        refreshUser().then(() => onSuccess());
+      }
+    }).catch(() => {});
+  }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -59,6 +76,14 @@ export const Login: React.FC<LoginProps> = ({ onSuccess }) => {
           </div>
         )}
 
+        {/* LDAP Active Notice */}
+        {ldapEnabled && (
+          <div className="p-2.5 rounded-xl bg-indigo-500/10 border border-indigo-500/20 text-xs text-indigo-300 flex items-center gap-2">
+            <Shield className="w-4 h-4 text-indigo-400 shrink-0" />
+            <span>Authentification centralisée LDAP / LLDAP active.</span>
+          </div>
+        )}
+
         {error && (
           <div className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/30 text-xs text-rose-400 flex items-center gap-2">
             <AlertCircle className="w-4 h-4 shrink-0" />
@@ -77,7 +102,7 @@ export const Login: React.FC<LoginProps> = ({ onSuccess }) => {
                 required
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
-                placeholder="Ex: alex"
+                placeholder={ldapEnabled ? "Identifiant local ou LDAP" : "Ex: alex"}
                 className="w-full bg-dark-850 border border-white/10 rounded-xl pl-9 pr-3.5 py-2 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:border-primary-500"
               />
             </div>
@@ -123,21 +148,29 @@ export const Login: React.FC<LoginProps> = ({ onSuccess }) => {
           </button>
         </form>
 
-        {/* Toggle Register / Login */}
-        <div className="text-center pt-2">
-          <button
-            type="button"
-            onClick={() => {
-              setIsRegistering(!isRegistering);
-              setError(null);
-            }}
-            className="text-xs text-slate-400 hover:text-primary-400 transition-colors"
-          >
-            {isRegistering
-              ? 'Vous avez déjà un compte ? Connectez-vous'
-              : 'Nouveau sur Frame ? Créer un compte'}
-          </button>
-        </div>
+        {/* Toggle Register / Login si autorisé */}
+        {allowRegistration && (
+          <div className="text-center pt-2">
+            <button
+              type="button"
+              onClick={() => {
+                setIsRegistering(!isRegistering);
+                setError(null);
+              }}
+              className="text-xs text-slate-400 hover:text-primary-400 transition-colors"
+            >
+              {isRegistering
+                ? 'Vous avez déjà un compte ? Connectez-vous'
+                : 'Nouveau sur Frame ? Créer un compte'}
+            </button>
+          </div>
+        )}
+
+        {!allowRegistration && isInitialized && (
+          <p className="text-center text-[11px] text-slate-500">
+            Inscription publique désactivée. Demandez un accès à l'administrateur.
+          </p>
+        )}
       </div>
     </div>
   );

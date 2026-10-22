@@ -4,8 +4,8 @@ import db from '../db/index.js';
 const SIMKL_API_BASE = 'https://api.simkl.com';
 
 export class SimklService {
-  private static getClientId(): string {
-    return getSetting('SIMKL_CLIENT_ID') || '';
+  public static getClientId(): string {
+    return getSetting('SIMKL_CLIENT_ID') || 'c4cb413d31b79bf10e4530fcb749d217983ea1fa9ef310ba0a56bd3aa2674e14';
   }
 
   public static isConfigured(): boolean {
@@ -13,13 +13,47 @@ export class SimklService {
   }
 
   /**
+   * Démarrer le flux d'authentification PIN Simkl (aucun redirect URI requis)
+   */
+  public static async getPin(): Promise<{ user_code: string; verification_url: string; expires_in: number }> {
+    const clientId = this.getClientId();
+    const res = await fetch(`${SIMKL_API_BASE}/oauth/pin?client_id=${clientId}`);
+    if (!res.ok) {
+      throw new Error('Impossible de générer le code PIN Simkl.');
+    }
+    const data = await res.json() as any;
+    return {
+      user_code: data.user_code,
+      verification_url: data.verification_url || `https://simkl.com/pin?${data.user_code}`,
+      expires_in: data.expires_in || 900,
+    };
+  }
+
+  /**
+   * Vérifier si l'utilisateur a validé le code PIN sur Simkl
+   */
+  public static async checkPin(userCode: string): Promise<{ authorized: boolean; access_token?: string; message?: string }> {
+    const clientId = this.getClientId();
+    try {
+      const res = await fetch(`${SIMKL_API_BASE}/oauth/pin/${userCode}?client_id=${clientId}`);
+      if (!res.ok) {
+        return { authorized: false, message: 'Code en attente ou expiré.' };
+      }
+      const data = await res.json() as any;
+      if (data.result === 'OK' && data.access_token) {
+        return { authorized: true, access_token: data.access_token };
+      }
+      return { authorized: false, message: data.message || 'En attente de confirmation sur Simkl...' };
+    } catch (e: any) {
+      return { authorized: false, message: e.message };
+    }
+  }
+
+  /**
    * Tester la validité d'un token Simkl
    */
   public static async testToken(accessToken: string): Promise<{ success: boolean; user?: any; message: string }> {
     const clientId = this.getClientId();
-    if (!clientId) {
-      return { success: false, message: 'SIMKL_CLIENT_ID non configuré.' };
-    }
 
     try {
       const res = await fetch(`${SIMKL_API_BASE}/users/settings`, {
@@ -46,7 +80,7 @@ export class SimklService {
    */
   public static async getWatchedFromSimkl(accessToken: string, type: 'movies' | 'shows' = 'movies'): Promise<any[]> {
     const clientId = this.getClientId();
-    if (!clientId || !accessToken) return [];
+    if (!accessToken) return [];
 
     try {
       const res = await fetch(`${SIMKL_API_BASE}/sync/all-items/${type}/completed`, {
@@ -76,7 +110,7 @@ export class SimklService {
     year?: number;
   }): Promise<boolean> {
     const clientId = this.getClientId();
-    if (!clientId || !params.accessToken) return false;
+    if (!params.accessToken) return false;
 
     try {
       const body: any = {};

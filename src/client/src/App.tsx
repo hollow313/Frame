@@ -6,6 +6,7 @@ import { RatingModal } from './components/RatingModal';
 import { SearchModal } from './components/SearchModal';
 import { Dashboard } from './pages/Dashboard';
 import { Discover } from './pages/Discover';
+import { Platforms } from './pages/Platforms';
 import { WatchedHistory } from './pages/WatchedHistory';
 import { Watchlist } from './pages/Watchlist';
 import { SeerRequests } from './pages/SeerRequests';
@@ -134,6 +135,14 @@ const AppContent: React.FC = () => {
 
         {currentTab === 'discover' && (
           <Discover
+            onSelectMedia={handleSelectMedia}
+            onOpenRating={handleOpenRating}
+            onToggleWatchlist={handleToggleWatchlist}
+          />
+        )}
+
+        {currentTab === 'platforms' && (
+          <Platforms
             onSelectMedia={handleSelectMedia}
             onOpenRating={handleOpenRating}
             onToggleWatchlist={handleToggleWatchlist}

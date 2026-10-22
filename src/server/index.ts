@@ -18,7 +18,9 @@ import recommendationsRoutes from './routes/recommendations.js';
 import seerRoutes from './routes/seer.js';
 import sonarrRoutes from './routes/sonarr.js';
 import simklRoutes from './routes/simkl.js';
+import jellyfinRoutes from './routes/jellyfin.js';
 import settingsRoutes from './routes/settings.js';
+import { ssoMiddleware } from './middleware/sso.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -29,6 +31,9 @@ initDatabase();
 const app = express();
 const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 30018;
 
+// Prise en charge des Reverse Proxies (Authelia, Nginx, Traefik, Caddy)
+app.set('trust proxy', true);
+
 app.use(cors({
   origin: true,
   credentials: true,
@@ -36,6 +41,9 @@ app.use(cors({
 app.use(cookieParser());
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
+
+// Middleware d'authentification SSO par en-têtes Reverse Proxy (si activé)
+app.use(ssoMiddleware);
 
 // Routes API
 app.use('/api/auth', authRoutes);
@@ -46,6 +54,7 @@ app.use('/api/recommendations', recommendationsRoutes);
 app.use('/api/seer', seerRoutes);
 app.use('/api/sonarr', sonarrRoutes);
 app.use('/api/simkl', simklRoutes);
+app.use('/api/jellyfin', jellyfinRoutes);
 app.use('/api/settings', settingsRoutes);
 
 // Statut de santé

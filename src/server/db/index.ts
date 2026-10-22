@@ -27,9 +27,12 @@ export function initDatabase() {
       role TEXT DEFAULT 'user',
       display_name TEXT,
       avatar_url TEXT,
+      auth_provider TEXT DEFAULT 'local',
       simkl_access_token TEXT,
       simkl_user_id TEXT,
       seer_user_id INTEGER,
+      jellyfin_user_id TEXT,
+      jellyfin_access_token TEXT,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
@@ -51,6 +54,7 @@ export function initDatabase() {
       season_number INTEGER DEFAULT 0,
       episode_number INTEGER DEFAULT 0,
       synced_simkl INTEGER DEFAULT 0,
+      synced_jellyfin INTEGER DEFAULT 0,
       FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
       UNIQUE(user_id, tmdb_id, media_type, season_number, episode_number)
     );
@@ -91,6 +95,22 @@ export function initDatabase() {
       PRIMARY KEY(tmdb_id, media_type)
     );
   `);
+
+  // Migrations douces des colonnes si la table existait déjà
+  const alterColumns = [
+    'ALTER TABLE users ADD COLUMN auth_provider TEXT DEFAULT "local"',
+    'ALTER TABLE users ADD COLUMN jellyfin_user_id TEXT',
+    'ALTER TABLE users ADD COLUMN jellyfin_access_token TEXT',
+    'ALTER TABLE watched_items ADD COLUMN synced_jellyfin INTEGER DEFAULT 0',
+  ];
+
+  for (const query of alterColumns) {
+    try {
+      db.exec(query);
+    } catch {
+      // Colonne déjà existante
+    }
+  }
 
   console.log(`[Database] SQLite initialisée avec succès dans ${dbPath}`);
 }

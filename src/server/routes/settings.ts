@@ -1,14 +1,16 @@
 import { Router, Response } from 'express';
-import { getAllSettingsMasked, setSetting, SettingKey, getSetting } from '../services/settingsService.js';
+import { getAllSettingsMasked, setSetting, SettingKey } from '../services/settingsService.js';
 import { authenticateToken, requireAdmin, AuthenticatedRequest } from '../middleware/auth.js';
 import { SeerService } from '../services/seerService.js';
 import { ArrService } from '../services/sonarrService.js';
 import { TMDBService } from '../services/tmdbService.js';
+import { LDAPService } from '../services/ldapService.js';
+import { JellyfinService } from '../services/jellyfinService.js';
 
 const router = Router();
 router.use(authenticateToken);
 
-// Récupérer la configuration (accessible à tous les connectés pour savoir quels services sont actifs)
+// Récupérer la configuration
 router.get('/', (_req, res) => {
   try {
     const settings = getAllSettingsMasked();
@@ -34,13 +36,23 @@ router.put('/', requireAdmin, (req: AuthenticatedRequest, res: Response): void =
       'SIMKL_CLIENT_ID',
       'SIMKL_CLIENT_SECRET',
       'DEFAULT_LANGUAGE',
+      'ALLOW_REGISTRATION',
+      'LDAP_ENABLED',
+      'LDAP_URL',
+      'LDAP_BASE_DN',
+      'LDAP_BIND_DN',
+      'LDAP_BIND_PASSWORD',
+      'LDAP_SEARCH_FILTER',
+      'SSO_ENABLED',
+      'SSO_HEADER',
+      'JELLYFIN_URL',
+      'JELLYFIN_API_KEY',
     ];
 
     for (const [key, value] of Object.entries(updates)) {
       if (allowedKeys.includes(key as SettingKey)) {
-        // Si l'utilisateur envoie une chaîne vide ou des astérisques de masque, ne pas écraser
-        if (value && !value.includes('••••')) {
-          setSetting(key as SettingKey, value.trim());
+        if (value !== undefined && !value.includes('••••')) {
+          setSetting(key as SettingKey, String(value).trim());
         }
       }
     }
@@ -80,6 +92,18 @@ router.post('/test', requireAdmin, async (req: AuthenticatedRequest, res: Respon
 
     if (service === 'radarr') {
       const test = await ArrService.testRadarr();
+      res.json(test);
+      return;
+    }
+
+    if (service === 'ldap') {
+      const test = await LDAPService.testConnection();
+      res.json(test);
+      return;
+    }
+
+    if (service === 'jellyfin') {
+      const test = await JellyfinService.testServer();
       res.json(test);
       return;
     }

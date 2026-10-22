@@ -143,7 +143,7 @@ export class TMDBService {
 
     const endpoint = `/${mediaType}/${id}`;
     const data = await this.request<any>(endpoint, {
-      append_to_response: 'credits,videos,recommendations,similar,keywords,release_dates',
+      append_to_response: 'credits,videos,recommendations,similar,keywords,release_dates,watch/providers',
     });
 
     // Si le synopsis en français est vide, tenter de récupérer l'anglais
@@ -205,6 +205,53 @@ export class TMDBService {
   }
 
   /**
+   * Découvrir des médias par plateforme de streaming (Netflix, Prime, Disney+, Crunchyroll...)
+   */
+  public static async discoverByProvider(
+    mediaType: 'movie' | 'tv',
+    providerId: number,
+    genreId?: number,
+    page: number = 1
+  ): Promise<{ results: TMDBMediaItem[]; total_pages: number }> {
+    const params: Record<string, string> = {
+      watch_region: 'FR',
+      with_watch_providers: providerId.toString(),
+      sort_by: 'popularity.desc',
+      page: page.toString(),
+      'vote_count.gte': '30',
+    };
+
+    if (genreId) {
+      params.with_genres = genreId.toString();
+    }
+
+    const data = await this.request<{ results: any[]; total_pages: number }>(`/discover/${mediaType}`, params);
+
+    return {
+      results: data.results.map((item) => this.normalizeMedia({ ...item, media_type: mediaType })),
+      total_pages: data.total_pages,
+    };
+  }
+
+  /**
+   * Découvrir des Animés / Mangas
+   */
+  public static async discoverAnime(page: number = 1): Promise<{ results: TMDBMediaItem[]; total_pages: number }> {
+    const data = await this.request<{ results: any[]; total_pages: number }>('/discover/tv', {
+      with_genres: '16', // Animation
+      with_original_language: 'ja',
+      sort_by: 'popularity.desc',
+      page: page.toString(),
+      'vote_count.gte': '20',
+    });
+
+    return {
+      results: data.results.map((item) => this.normalizeMedia({ ...item, media_type: 'tv' })),
+      total_pages: data.total_pages,
+    };
+  }
+
+  /**
    * Normaliser les champs films/séries en un objet uniforme
    */
   private static normalizeMedia(item: any, isDetailed: boolean = false): TMDBMediaItem & Record<string, any> {
@@ -245,6 +292,20 @@ export class TMDBService {
       base.number_of_episodes = item.number_of_episodes;
       base.seasons = item.seasons || [];
       base.trailer_key = trailerKey;
+
+      // Plateformes de streaming disponibles en France (Netflix, Prime, Disney+, Crunchyroll, etc.)
+      const providersFR = item['watch/providers']?.results?.FR;
+      base.streaming_providers = providersFR?.flatrate?.map((p: any) => ({
+        id: p.provider_id,
+        name: p.provider_name,
+        logo_path: p.logo_path ? `https://image.tmdb.org/t/p/w92${p.logo_path}` : null,
+      })) || [];
+      base.buy_providers = providersFR?.buy?.map((p: any) => ({
+        id: p.provider_id,
+        name: p.provider_name,
+        logo_path: p.logo_path ? `https://image.tmdb.org/t/p/w92${p.logo_path}` : null,
+      })) || [];
+
       base.cast = (item.credits?.cast || []).slice(0, 12).map((actor: any) => ({
         id: actor.id,
         name: actor.name,

@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { Sparkles, Film, Tv, Clock, Star, TrendingUp, AlertCircle } from 'lucide-react';
-import { MediaItem, RecommendationResponse, UserStats } from '../types';
+import { Sparkles, Film, Tv, Clock, Star, PlayCircle, AlertCircle } from 'lucide-react';
+import { MediaItem, RecommendationResponse, UserStats, HeroProposalItem } from '../types';
 import { api } from '../services/api';
-import { HeroBanner } from '../components/HeroBanner';
+import { HeroCarousel } from '../components/HeroCarousel';
 import { RecommendationRail } from '../components/RecommendationRail';
 import { useAuth } from '../context/AuthContext';
 
@@ -20,9 +20,10 @@ export const Dashboard: React.FC<DashboardProps> = ({
   onNavigateTab,
 }) => {
   const { user } = useAuth();
-  const [heroItem, setHeroItem] = useState<MediaItem | null>(null);
+  const [heroItems, setHeroItems] = useState<HeroProposalItem[]>([]);
   const [recommendations, setRecommendations] = useState<RecommendationResponse | null>(null);
   const [stats, setStats] = useState<UserStats | null>(null);
+  const [jellyfinPlaying, setJellyfinPlaying] = useState<any[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -38,20 +39,20 @@ export const Dashboard: React.FC<DashboardProps> = ({
       const recs = await api.getRecommendations();
       setRecommendations(recs);
 
-      // Sélectionner un item marquant pour le Hero Banner
-      if (recs.sections.length > 0 && recs.sections[0].items.length > 0) {
-        setHeroItem(recs.sections[0].items[0]);
-      } else {
-        const trending = await api.getTrending('week');
-        if (trending.results.length > 0) {
-          setHeroItem(trending.results[0]);
-        }
+      if (recs.heroItems && recs.heroItems.length > 0) {
+        setHeroItems(recs.heroItems);
       }
 
-      // Si l'utilisateur est connecté, charger ses statistiques
+      // Si l'utilisateur est connecté, charger stats et lecture Jellyfin en cours
       if (user) {
         api.getUserStats()
           .then((s) => setStats(s))
+          .catch(() => {});
+
+        api.getJellyfinNowPlaying()
+          .then((res) => {
+            if (res.active) setJellyfinPlaying(res.items);
+          })
           .catch(() => {});
       }
     } catch (err: any) {
@@ -89,6 +90,29 @@ export const Dashboard: React.FC<DashboardProps> = ({
           >
             Configurer
           </button>
+        </div>
+      )}
+
+      {/* Jellyfin Live Reading Banner */}
+      {jellyfinPlaying.length > 0 && (
+        <div className="p-4 rounded-2xl bg-indigo-950/40 border border-indigo-500/30 flex items-center justify-between gap-4 animate-in slide-in-from-top">
+          <div className="flex items-center gap-3.5">
+            <div className="w-10 h-10 rounded-xl bg-indigo-600/30 text-indigo-400 flex items-center justify-center animate-pulse">
+              <PlayCircle className="w-6 h-6" />
+            </div>
+            <div>
+              <span className="text-[11px] font-bold uppercase tracking-wider text-indigo-400">En cours de lecture sur votre Jellyfin</span>
+              <p className="text-sm font-bold text-white">
+                {jellyfinPlaying[0].seriesName ? `${jellyfinPlaying[0].seriesName} - ` : ''}{jellyfinPlaying[0].title}
+              </p>
+              <div className="w-48 bg-dark-800 rounded-full h-1.5 mt-1.5 overflow-hidden">
+                <div className="bg-indigo-500 h-full rounded-full" style={{ width: `${jellyfinPlaying[0].percentPlayed}%` }} />
+              </div>
+            </div>
+          </div>
+          <span className="text-xs font-mono font-bold text-indigo-300">
+            {jellyfinPlaying[0].percentPlayed}%
+          </span>
         </div>
       )}
 
@@ -137,10 +161,10 @@ export const Dashboard: React.FC<DashboardProps> = ({
         </div>
       )}
 
-      {/* Hero Banner with Featured Media */}
-      {heroItem && (
-        <HeroBanner
-          item={heroItem}
+      {/* Hero Carousel with at least 5 customized media proposals (Films / Mangas / Séries) */}
+      {heroItems.length > 0 && (
+        <HeroCarousel
+          items={heroItems}
           onSelect={onSelectMedia}
           onOpenRating={onOpenRating}
           onToggleWatchlist={onToggleWatchlist}

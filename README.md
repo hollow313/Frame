@@ -116,7 +116,69 @@ Accédez ensuite à l'application depuis votre navigateur :
 
 ---
 
-## 🧠 Moteur de Recommandations
+## 🛠️ Configuration & Intégrations
+
+### 1. Synchronisation Simkl (Connexion Simplifiée en 1 Clic)
+
+Pour connecter votre compte Simkl sans vous soucier des URLs de redirection ou de configuration d'application :
+1. Dans Frame, ouvrez **Paramètres** > onglet **Mon Profil, Simkl & Jellyfin**.
+2. Cliquez sur **« Obtenir un code PIN Simkl »**.
+3. Cliquez sur **« Valider sur Simkl »** (le lien `simkl.com/pin?XXXX` s'ouvre avec votre code pré-rempli).
+4. Cliquez sur **Approve** sur Simkl, puis revenez sur Frame et cliquez sur **« J'ai validé le code sur Simkl ! »**.
+5. Cliquez sur **« Synchroniser mes vues maintenant »** pour importer tous vos films et séries !
+
+*(Si vous souhaitez utiliser votre propre application développeur Simkl, indiquez dans les **Redirect URLs** de Simkl : `http://<IP_DU_SERVEUR>:30018/api/simkl/callback`).*
+
+---
+
+### 2. Gestion des Comptes & Inscription Restreinte
+
+Par défaut, l'auto-inscription publique est **désactivée** pour préserver la sécurité de votre serveur :
+- L'administrateur peut créer des comptes pour les membres depuis l'onglet **Gestion Utilisateurs** via le bouton **« Créer un utilisateur »**.
+- Si vous préférez autoriser les utilisateurs à s'inscrire eux-mêmes, activez simplement la case à cocher correspondante dans **Paramètres** > **Sécurité & Authentification**.
+
+---
+
+### 3. Authentification Centralisée LDAP / LLDAP
+
+Frame intègre un client natif LDAP idéal pour se brancher sur votre conteneur **LLDAP** ou OpenLDAP :
+1. Dans **Paramètres** > **Sécurité & Authentification**, cochez **« Activer la connexion des utilisateurs via LDAP »**.
+2. Renseignez les paramètres de votre annuaire :
+   - **URL LDAP** : `ldap://<IP_DU_SERVEUR>:3890` (ou le nom de conteneur Docker `ldap://lldap:3890`)
+   - **Base DN** : `dc=example,dc=com`
+   - **Bind DN** : `uid=admin,ou=people,dc=example,dc=com`
+   - **Filtre utilisateur** : `(&(objectClass=person)(|(uid={{username}})(mail={{username}})))`
+3. Cliquez sur **« Tester LDAP »** pour valider la connexion. Les utilisateurs de votre annuaire pourront directement se connecter avec leurs identifiants !
+
+---
+
+### 4. Authentification SSO / Reverse Proxy (Authelia, Authentik, Traefik, Caddy)
+
+Frame fonctionne parfaitement derrière un reverse proxy gérant le SSO :
+1. Activez **« Activer l'authentification automatique par en-tête Reverse Proxy »**.
+2. L'en-tête par défaut est **`Remote-User`** (format standard Authelia).
+3. Lorsqu'un utilisateur authentifié par Authelia arrive sur Frame, il est automatiquement reconnu et connecté sans mot de passe additionnel.
+
+---
+
+### 5. Connexion Jellyfin & Statut de Lecture Réel Multi-utilisateurs
+
+Pour suivre exactement ce que chaque utilisateur regarde en temps réel :
+1. **Au niveau Administrateur** : Renseignez l'URL globale de votre serveur Jellyfin dans **Paramètres** > **Intégrations Serveur** (ex: `http://serveur:8096`).
+2. **Au niveau de chaque Utilisateur** : Chaque membre peut lier son propre compte Jellyfin personnel dans **Paramètres** > **Mon Profil, Simkl & Jellyfin** avec ses identifiants.
+3. Le bandeau d'accueil affiche automatiquement la lecture en direct avec pourcentage de progression, et le bouton **« Synchroniser mes vues Jellyfin »** importe votre historique exact.
+
+---
+
+### 6. Sorties du moment par Plateforme de Streaming
+
+Grâce à l'intégration JustWatch / TMDB :
+- L'onglet **Plateformes** permet de filtrer l'ensemble des films et séries du moment par service de streaming disponible en France (**Netflix, Prime Video, Disney+, Crunchyroll, Apple TV+, Canal+**), cumulable avec les filtres par genre.
+- Chaque fiche détaillée affiche les logos des plateformes sur lesquelles l'œuvre est disponible en visionnage.
+
+---
+
+## 🧠 Moteur de Recommandations & Carrousel Dédié
 
 Contrairement aux listes statiques génériques, Frame intègre un algorithme d'affinité cinéphile :
 1. **Pondération par note & récurrence** : Les films notés 8, 9 ou 10/10 apportent un score d'affinité supérieur aux genres, réalisateurs et acteurs associés.
@@ -162,17 +224,6 @@ npm start
 - **Mots de passe hachés** : Utilisant `bcrypt` avec salage à 10 tours.
 - **Sessions chiffrées** : Jetons JWT sécurisés transmis via en-têtes d'autorisation et cookies HTTP-only.
 - **Isolation utilisateur** : UID `568` / GID `568` pour correspondre aux permissions de stockage sécurisées sur votre serveur.
-
----
-
-## 🤖 Intégration Continue (CI/CD GitHub Actions -> Docker Hub)
-
-Le dépôt inclut un workflow GitHub Actions automatisé (`.github/workflows/docker.yml`) qui compile et publie l'image multi-plateformes (`linux/amd64`, `linux/arm64`) vers Docker Hub à chaque push sur la branche `main`.
-
-### Configuration des Secrets GitHub
-Pour activer la publication automatique, ajoutez ces 2 secrets dans les paramètres de votre dépôt GitHub (**Settings** > **Secrets and variables** > **Actions**) :
-- `DOCKERHUB_USERNAME` : Votre identifiant Docker Hub (ex: `hollow313`)
-- `DOCKERHUB_TOKEN` : Votre Personal Access Token Docker Hub (généré sur [hub.docker.com](https://hub.docker.com/settings/security) avec droits Read/Write/Delete)
 
 ---
 
