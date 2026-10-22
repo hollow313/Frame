@@ -284,6 +284,51 @@ export class TMDBService {
     };
   }
 
+  private static applyDateConstraints(
+    params: Record<string, string>,
+    targetType: 'movie' | 'tv',
+    dateFilter?: string,
+    year?: number,
+    recentOnly?: boolean
+  ) {
+    const now = new Date();
+    const dateFieldGte = targetType === 'movie' ? 'primary_release_date.gte' : 'first_air_date.gte';
+    const dateFieldLte = targetType === 'movie' ? 'primary_release_date.lte' : 'first_air_date.lte';
+    const yearField = targetType === 'movie' ? 'primary_release_year' : 'first_air_date_year';
+    const formatDate = (d: Date) => d.toISOString().split('T')[0];
+
+    if (dateFilter === '7d') {
+      const past7 = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+      const future7 = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
+      params[dateFieldGte] = formatDate(past7);
+      params[dateFieldLte] = formatDate(future7);
+      params['vote_count.gte'] = '1';
+    } else if (dateFilter === '30d') {
+      const past30 = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+      params[dateFieldGte] = formatDate(past30);
+      params[dateFieldLte] = formatDate(now);
+      params['vote_count.gte'] = '1';
+    } else if (dateFilter === '6m') {
+      const past180 = new Date(now.getTime() - 180 * 24 * 60 * 60 * 1000);
+      params[dateFieldGte] = formatDate(past180);
+      params[dateFieldLte] = formatDate(now);
+      params['vote_count.gte'] = '5';
+    } else if (dateFilter === 'this_year') {
+      const currentYear = now.getFullYear();
+      params[yearField] = currentYear.toString();
+    } else if (year) {
+      params[yearField] = year.toString();
+    } else if (dateFilter?.startsWith('year_')) {
+      const y = parseInt(dateFilter.replace('year_', ''), 10);
+      if (!isNaN(y)) params[yearField] = y.toString();
+    } else if (recentOnly) {
+      const eighteenMonthsAgo = new Date(now.getTime() - 540 * 24 * 60 * 60 * 1000);
+      const nextMonth = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
+      params[dateFieldGte] = formatDate(eighteenMonthsAgo);
+      params[dateFieldLte] = formatDate(nextMonth);
+    }
+  }
+
   /**
    * Découverte Unifiée avancée (Films, Séries, Mangas & Animés, avec filtres par plateforme, genre et récence)
    */
@@ -293,6 +338,8 @@ export class TMDBService {
     providerId?: number;
     genreId?: number;
     recentOnly?: boolean;
+    dateFilter?: string;
+    year?: number;
     sortBy?: 'popularity.desc' | 'release_date.desc' | 'vote_average.desc';
     page?: number;
   }): Promise<{ results: TMDBMediaItem[]; total_pages: number }> {
@@ -332,17 +379,7 @@ export class TMDBService {
         params.with_watch_monetization_types = 'flatrate|free|ads';
       }
 
-      if (recentOnly) {
-        const eighteenMonthsAgo = new Date(Date.now() - 540 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
-        const nextMonth = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
-        if (targetType === 'movie') {
-          params['primary_release_date.gte'] = eighteenMonthsAgo;
-          params['primary_release_date.lte'] = nextMonth;
-        } else {
-          params['first_air_date.gte'] = eighteenMonthsAgo;
-          params['first_air_date.lte'] = nextMonth;
-        }
-      }
+      this.applyDateConstraints(params, targetType, options.dateFilter, options.year, recentOnly);
 
       const data = await this.request<{ results: any[]; total_pages: number }>(endpoint, params);
       return {
@@ -356,7 +393,7 @@ export class TMDBService {
       const endpoint = `/discover/${type}`;
       const params: Record<string, string> = {
         page: page.toString(),
-        'vote_count.gte': recentOnly ? '5' : '15',
+        'vote_count.gte': (recentOnly || (options.dateFilter && options.dateFilter !== 'all')) ? '5' : '15',
       };
 
       if (options.sortBy) {
@@ -381,17 +418,7 @@ export class TMDBService {
         params.with_watch_monetization_types = 'flatrate|free|ads';
       }
 
-      if (recentOnly) {
-        const eighteenMonthsAgo = new Date(Date.now() - 540 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
-        const nextMonth = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
-        if (type === 'movie') {
-          params['primary_release_date.gte'] = eighteenMonthsAgo;
-          params['primary_release_date.lte'] = nextMonth;
-        } else {
-          params['first_air_date.gte'] = eighteenMonthsAgo;
-          params['first_air_date.lte'] = nextMonth;
-        }
-      }
+      this.applyDateConstraints(params, type, options.dateFilter, options.year, recentOnly);
 
       const data = await this.request<{ results: any[]; total_pages: number }>(endpoint, params);
       return {
@@ -401,7 +428,8 @@ export class TMDBService {
     }
 
     // CAS 3: Tout (Films et Séries entrelacés)
-    if (!options.providerId && !options.genreId && !recentOnly && (!options.sortBy || options.sortBy === 'popularity.desc')) {
+    const hasDateConstraint = Boolean(options.dateFilter && options.dateFilter !== 'all') || Boolean(options.year) || Boolean(recentOnly);
+    if (!options.providerId && !options.genreId && !hasDateConstraint && (!options.sortBy || options.sortBy === 'popularity.desc')) {
       const trending = await this.getTrending('week', page);
       return {
         results: trending.results,

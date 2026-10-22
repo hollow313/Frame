@@ -137,6 +137,19 @@ export class SeerService {
   }
 
   /**
+   * Obtenir la liste des utilisateurs Overseerr/Jellyseerr
+   */
+  public static async getUsers(): Promise<Array<{ id: number; email?: string; username?: string; displayName?: string; userType?: number; permissions?: number }>> {
+    if (!this.isConfigured()) return [];
+    try {
+      const data = await this.request<{ results: any[] }>('/user?take=50');
+      return data.results || [];
+    } catch {
+      return [];
+    }
+  }
+
+  /**
    * Créer une demande de film ou série dans Overseerr / Jellyseerr
    */
   public static async createRequest(params: {
@@ -150,14 +163,17 @@ export class SeerService {
       throw new Error('Overseerr / Jellyseerr n\'est pas configuré');
     }
 
+    const defaultUserId = getSetting('SEER_DEFAULT_USER_ID');
+    const effectiveUserId = params.userId || (defaultUserId ? parseInt(defaultUserId, 10) : undefined);
+
     const payload: any = {
       mediaType: params.mediaType,
       mediaId: params.mediaId,
       is4k: Boolean(params.is4k),
     };
 
-    if (params.userId) {
-      payload.userId = params.userId;
+    if (effectiveUserId) {
+      payload.userId = effectiveUserId;
     }
 
     if (params.mediaType === 'tv') {

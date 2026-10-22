@@ -31,6 +31,8 @@ export const Settings: React.FC = () => {
   const [tmdbKey, setTmdbKey] = useState('');
   const [seerUrl, setSeerUrl] = useState('');
   const [seerApiKey, setSeerApiKey] = useState('');
+  const [seerDefaultUserId, setSeerDefaultUserId] = useState('');
+  const [seerUsers, setSeerUsers] = useState<any[]>([]);
   const [sonarrUrl, setSonarrUrl] = useState('');
   const [sonarrApiKey, setSonarrApiKey] = useState('');
   const [radarrUrl, setRadarrUrl] = useState('');
@@ -156,6 +158,10 @@ export const Settings: React.FC = () => {
         if (s.TMDB_API_KEY?.value) setTmdbKey(s.TMDB_API_KEY.value);
         if (s.SEER_URL?.value) setSeerUrl(s.SEER_URL.value);
         if (s.SEER_API_KEY?.value) setSeerApiKey(s.SEER_API_KEY.value);
+        if (s.SEER_DEFAULT_USER_ID?.value) setSeerDefaultUserId(s.SEER_DEFAULT_USER_ID.value);
+        if (s.SEER_URL?.value && s.SEER_API_KEY?.value) {
+          api.getSeerUsers().then((u) => setSeerUsers(u)).catch(() => {});
+        }
         if (s.SONARR_URL?.value) setSonarrUrl(s.SONARR_URL.value);
         if (s.SONARR_API_KEY?.value) setSonarrApiKey(s.SONARR_API_KEY.value);
         if (s.RADARR_URL?.value) setRadarrUrl(s.RADARR_URL.value);
@@ -189,6 +195,7 @@ export const Settings: React.FC = () => {
         TMDB_API_KEY: tmdbKey,
         SEER_URL: seerUrl,
         SEER_API_KEY: seerApiKey,
+        SEER_DEFAULT_USER_ID: seerDefaultUserId,
         SONARR_URL: sonarrUrl,
         SONARR_API_KEY: sonarrApiKey,
         RADARR_URL: radarrUrl,
@@ -222,6 +229,9 @@ export const Settings: React.FC = () => {
         ...prev,
         [service]: { loading: false, success: res.success, message: res.message },
       }));
+      if (service === 'seer' && res.success) {
+        api.getSeerUsers().then((u) => setSeerUsers(u)).catch(() => {});
+      }
     } catch (err: any) {
       setTestResults((prev) => ({
         ...prev,
@@ -670,6 +680,28 @@ export const Settings: React.FC = () => {
                   className="w-full bg-dark-850 border border-white/10 rounded-xl px-3.5 py-2 text-sm text-slate-100 focus:outline-none focus:border-primary-500"
                 />
               </div>
+            </div>
+
+            {/* Requester user configuration (to control auto-approval) */}
+            <div className="pt-1">
+              <label className="text-xs font-medium text-slate-300 block mb-1">
+                Utilisateur Seer pour les demandes (gestion des approbations)
+              </label>
+              <select
+                value={seerDefaultUserId}
+                onChange={(e) => setSeerDefaultUserId(e.target.value)}
+                className="w-full bg-dark-850 border border-white/10 rounded-xl px-3.5 py-2 text-sm text-slate-100 focus:outline-none focus:border-primary-500 cursor-pointer"
+              >
+                <option value="">Par défaut (Admin - Clé API)</option>
+                {seerUsers.map((u) => (
+                  <option key={u.id} value={u.id.toString()}>
+                    {u.displayName || u.username || `Utilisateur #${u.id}`} (ID: {u.id})
+                  </option>
+                ))}
+              </select>
+              <p className="text-[11px] text-slate-400 mt-1.5 leading-relaxed">
+                💡 <strong>Important :</strong> Par défaut, la clé API appartient à l'administrateur de Seer qui a le droit « Auto-Approve » activé. Pour que vos demandes restent en <em>attente d'approbation manuelle</em>, décochez « Auto-Approve Movies » et « Auto-Approve Series » sur votre compte dans Overseerr, ou sélectionnez ici un utilisateur sans auto-approbation.
+              </p>
             </div>
             {testResults.seer && (
               <p className={`text-xs ${testResults.seer.success ? 'text-emerald-400' : 'text-rose-400'}`}>

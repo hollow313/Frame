@@ -76,8 +76,8 @@ export const SeerRequests: React.FC<SeerRequestsProps> = ({ onSelectMedia, onNav
       case 3: // Processing
         return (
           <span className="flex items-center gap-1.5 text-xs font-bold px-3 py-1 rounded-full bg-amber-500/20 text-amber-400 border border-amber-500/30">
-            <HardDrive className="w-3.5 h-3.5 animate-pulse" />
-            Téléchargement en cours
+            <Clock className="w-3.5 h-3.5" />
+            Demande approuvée (en recherche)
           </span>
         );
       case 2: // Pending
@@ -144,7 +144,7 @@ export const SeerRequests: React.FC<SeerRequestsProps> = ({ onSelectMedia, onNav
               : 'text-slate-400 hover:text-white'
           }`}
         >
-          En cours de téléchargement
+          Approuvées / En traitement
         </button>
         <button
           onClick={() => setFilter('available')}

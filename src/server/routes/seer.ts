@@ -39,6 +39,16 @@ router.get('/check/:mediaType/:tmdbId', async (req, res: Response): Promise<void
 // Les actions de demande et de consultation nécessitent une session utilisateur
 router.use(authenticateToken);
 
+// Récupérer la liste des utilisateurs Overseerr / Jellyseerr
+router.get('/users', async (_req, res) => {
+  try {
+    const users = await SeerService.getUsers();
+    res.json(users);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Récupérer la liste des demandes enrichies avec les métadonnées TMDB
 router.get('/requests', async (req, res) => {
   try {

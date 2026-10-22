@@ -99,6 +99,8 @@ export const api = {
     providerId?: number;
     genreId?: number;
     recentOnly?: boolean;
+    dateFilter?: string;
+    year?: number;
     sortBy?: 'popularity.desc' | 'release_date.desc' | 'vote_average.desc';
     page?: number;
   }) => {
@@ -108,6 +110,8 @@ export const api = {
     if (params.providerId) q.set('providerId', params.providerId.toString());
     if (params.genreId) q.set('genreId', params.genreId.toString());
     if (params.recentOnly !== undefined) q.set('recentOnly', params.recentOnly ? 'true' : 'false');
+    if (params.dateFilter) q.set('dateFilter', params.dateFilter);
+    if (params.year) q.set('year', params.year.toString());
     if (params.sortBy) q.set('sortBy', params.sortBy);
     if (params.page) q.set('page', params.page.toString());
     return request<{ results: MediaItem[]; total_pages: number }>(`/tmdb/unified-discover?${q.toString()}`);
@@ -165,6 +169,7 @@ export const api = {
 
   // ==================== SEER (OVERSEERR) ====================
   getSeerStatus: () => request<{ configured: boolean; connected: boolean; message: string; version?: string }>('/seer/status'),
+  getSeerUsers: () => request<Array<{ id: number; username?: string; displayName?: string; email?: string }>>('/seer/users'),
   checkSeerStatus: (mediaType: 'movie' | 'tv', tmdbId: number) =>
     request<SeerMediaStatus>(`/seer/check/${mediaType}/${tmdbId}`),
   getSeerRequests: (take: number = 30, skip: number = 0, filter: string = 'all') =>

@@ -65,7 +65,8 @@ export const Discover: React.FC<DiscoverProps> = ({
   // Filters
   const [selectedPlatform, setSelectedPlatform] = useState<number>(0);
   const [selectedGenre, setSelectedGenre] = useState<number>(0);
-  const [recentOnly, setRecentOnly] = useState<boolean>(true); // Actif par défaut pour privilégier les sorties du moment
+  const [dateFilter, setDateFilter] = useState<string>('30d'); // Par défaut les 30 derniers jours
+  const [selectedYear, setSelectedYear] = useState<number | undefined>(undefined);
   const [sortBy, setSortBy] = useState<'popularity.desc' | 'release_date.desc' | 'vote_average.desc'>('popularity.desc');
   const [animeSubtype, setAnimeSubtype] = useState<'tv' | 'movie'>('tv');
 
@@ -86,7 +87,7 @@ export const Discover: React.FC<DiscoverProps> = ({
 
   useEffect(() => {
     loadMedia();
-  }, [selectedCategory, selectedPlatform, selectedGenre, recentOnly, sortBy, animeSubtype, page]);
+  }, [selectedCategory, selectedPlatform, selectedGenre, dateFilter, selectedYear, sortBy, animeSubtype, page]);
 
   const loadMedia = async () => {
     setLoading(true);
@@ -96,7 +97,8 @@ export const Discover: React.FC<DiscoverProps> = ({
         animeType: animeSubtype,
         providerId: selectedPlatform > 0 ? selectedPlatform : undefined,
         genreId: selectedGenre > 0 ? selectedGenre : undefined,
-        recentOnly,
+        dateFilter,
+        year: selectedYear,
         sortBy,
         page,
       });
@@ -113,12 +115,13 @@ export const Discover: React.FC<DiscoverProps> = ({
   const handleResetFilters = () => {
     setSelectedPlatform(0);
     setSelectedGenre(0);
-    setRecentOnly(false);
+    setDateFilter('all');
+    setSelectedYear(undefined);
     setSortBy('popularity.desc');
     setPage(1);
   };
 
-  const hasActiveFilters = selectedPlatform > 0 || selectedGenre > 0 || recentOnly || sortBy !== 'popularity.desc';
+  const hasActiveFilters = selectedPlatform > 0 || selectedGenre > 0 || dateFilter !== 'all' || sortBy !== 'popularity.desc';
 
   return (
     <div className="space-y-6 pb-20">
@@ -311,21 +314,65 @@ export const Discover: React.FC<DiscoverProps> = ({
           </div>
         </div>
 
-        {/* Row 3: Sort Options & Recent Releases Toggle */}
+        {/* Row 3: Sort Options & Date Filters */}
         <div className="flex flex-wrap items-center justify-between gap-3 pt-3 border-t border-white/5 text-xs">
-          {/* Left: Recent Releases Toggle */}
-          <label className="flex items-center gap-2.5 cursor-pointer bg-dark-850 hover:bg-dark-800 px-3 py-1.5 rounded-xl border border-white/5 transition-colors">
-            <input
-              type="checkbox"
-              checked={recentOnly}
-              onChange={(e) => { setRecentOnly(e.target.checked); setPage(1); }}
-              className="w-4 h-4 rounded border-slate-700 bg-dark-900 text-primary-600 focus:ring-0"
-            />
-            <span className="font-semibold text-slate-200 flex items-center gap-1.5">
+          {/* Left: Date / Period Filter */}
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-slate-400 font-medium flex items-center gap-1.5">
               <Calendar className="w-3.5 h-3.5 text-primary-400" />
-              <span>Sorties récentes du moment (2025 - 2026)</span>
+              <span>Sorties :</span>
             </span>
-          </label>
+
+            <select
+              value={dateFilter}
+              onChange={(e) => {
+                const val = e.target.value;
+                setDateFilter(val);
+                if (val.startsWith('year_')) {
+                  setSelectedYear(parseInt(val.replace('year_', ''), 10));
+                } else if (val !== 'custom_year') {
+                  setSelectedYear(undefined);
+                }
+                setPage(1);
+              }}
+              className="bg-dark-850 border border-white/10 text-slate-200 text-xs rounded-xl px-3 py-1.5 focus:outline-none focus:border-primary-500 font-medium cursor-pointer"
+            >
+              <option value="all">Toutes les dates</option>
+              <option value="7d">7 derniers jours</option>
+              <option value="30d">30 derniers jours</option>
+              <option value="6m">6 derniers mois</option>
+              <option value="this_year">Cette année (2026)</option>
+              <optgroup label="Années spécifiques">
+                <option value="year_2025">2025</option>
+                <option value="year_2024">2024</option>
+                <option value="year_2023">2023</option>
+                <option value="year_2022">2022</option>
+                <option value="year_2021">2021</option>
+                <option value="year_2020">2020</option>
+                <option value="year_2019">2019</option>
+                <option value="year_2015">2015</option>
+                <option value="year_2010">2010</option>
+                <option value="year_2000">2000</option>
+                <option value="custom_year">Autre année...</option>
+              </optgroup>
+            </select>
+
+            {dateFilter === 'custom_year' && (
+              <input
+                type="number"
+                min="1920"
+                max="2099"
+                placeholder="Ex: 1999"
+                value={selectedYear || ''}
+                onChange={(e) => {
+                  const val = parseInt(e.target.value, 10);
+                  setSelectedYear(isNaN(val) ? undefined : val);
+                  setPage(1);
+                }}
+                className="w-20 bg-dark-850 border border-white/10 text-slate-200 text-xs rounded-xl px-2.5 py-1.5 focus:outline-none focus:border-primary-500"
+              />
+            )}
+          </div>
 
           {/* Right: Tri & Reset */}
           <div className="flex items-center gap-2">

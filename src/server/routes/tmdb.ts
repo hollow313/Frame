@@ -176,6 +176,8 @@ router.get('/unified-discover', async (req: AuthenticatedRequest, res: Response)
     const providerId = req.query.providerId ? parseInt(req.query.providerId as string, 10) : undefined;
     const genreId = req.query.genreId ? parseInt(req.query.genreId as string, 10) : undefined;
     const recentOnly = req.query.recentOnly === 'true';
+    const dateFilter = (req.query.dateFilter as string) || (recentOnly ? 'recent' : 'all');
+    const year = req.query.year ? parseInt(req.query.year as string, 10) : undefined;
     const sortBy = req.query.sortBy as 'popularity.desc' | 'release_date.desc' | 'vote_average.desc' | undefined;
     const page = parseInt(req.query.page as string, 10) || 1;
 
@@ -185,6 +187,8 @@ router.get('/unified-discover', async (req: AuthenticatedRequest, res: Response)
       providerId,
       genreId,
       recentOnly,
+      dateFilter,
+      year,
       sortBy,
       page,
     });

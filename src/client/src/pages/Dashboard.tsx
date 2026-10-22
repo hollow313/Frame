@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { Sparkles, Film, Tv, Clock, Star, PlayCircle, AlertCircle } from 'lucide-react';
-import { MediaItem, RecommendationResponse, UserStats, HeroProposalItem } from '../types';
+import { PlayCircle, AlertCircle } from 'lucide-react';
+import { MediaItem, RecommendationResponse, HeroProposalItem } from '../types';
 import { api } from '../services/api';
 import { HeroCarousel } from '../components/HeroCarousel';
 import { RecommendationRail } from '../components/RecommendationRail';
@@ -22,7 +22,6 @@ export const Dashboard: React.FC<DashboardProps> = ({
   const { user } = useAuth();
   const [heroItems, setHeroItems] = useState<HeroProposalItem[]>([]);
   const [recommendations, setRecommendations] = useState<RecommendationResponse | null>(null);
-  const [stats, setStats] = useState<UserStats | null>(null);
   const [jellyfinPlaying, setJellyfinPlaying] = useState<any[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
@@ -43,12 +42,8 @@ export const Dashboard: React.FC<DashboardProps> = ({
         setHeroItems(recs.heroItems);
       }
 
-      // Si l'utilisateur est connecté, charger stats et lecture Jellyfin en cours
+      // Si l'utilisateur est connecté, charger lecture Jellyfin en cours
       if (user) {
-        api.getUserStats()
-          .then((s) => setStats(s))
-          .catch(() => {});
-
         api.getJellyfinNowPlaying()
           .then((res) => {
             if (res.active) setJellyfinPlaying(res.items);
@@ -113,51 +108,6 @@ export const Dashboard: React.FC<DashboardProps> = ({
           <span className="text-xs font-mono font-bold text-indigo-300">
             {jellyfinPlaying[0].percentPlayed}%
           </span>
-        </div>
-      )}
-
-      {/* User Quick Stats Bar */}
-      {user && stats && stats.totalWatched > 0 && (
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-          <div className="p-4 rounded-2xl bg-dark-900 border border-white/5 flex items-center gap-3.5">
-            <div className="w-10 h-10 rounded-xl bg-primary-600/20 text-primary-400 flex items-center justify-center">
-              <Film className="w-5 h-5" />
-            </div>
-            <div>
-              <span className="text-xl font-bold text-white">{stats.moviesWatched}</span>
-              <p className="text-xs text-slate-400">Films vus</p>
-            </div>
-          </div>
-
-          <div className="p-4 rounded-2xl bg-dark-900 border border-white/5 flex items-center gap-3.5">
-            <div className="w-10 h-10 rounded-xl bg-indigo-600/20 text-indigo-400 flex items-center justify-center">
-              <Tv className="w-5 h-5" />
-            </div>
-            <div>
-              <span className="text-xl font-bold text-white">{stats.tvWatched}</span>
-              <p className="text-xs text-slate-400">Séries suivies</p>
-            </div>
-          </div>
-
-          <div className="p-4 rounded-2xl bg-dark-900 border border-white/5 flex items-center gap-3.5">
-            <div className="w-10 h-10 rounded-xl bg-accent-gold/20 text-accent-gold flex items-center justify-center">
-              <Clock className="w-5 h-5" />
-            </div>
-            <div>
-              <span className="text-xl font-bold text-white">{stats.estimatedHours} h</span>
-              <p className="text-xs text-slate-400">Temps de visionnage</p>
-            </div>
-          </div>
-
-          <div className="p-4 rounded-2xl bg-dark-900 border border-white/5 flex items-center gap-3.5">
-            <div className="w-10 h-10 rounded-xl bg-emerald-500/20 text-emerald-400 flex items-center justify-center">
-              <Star className="w-5 h-5" />
-            </div>
-            <div>
-              <span className="text-xl font-bold text-white">{stats.averageRating ? `${stats.averageRating} / 10` : '—'}</span>
-              <p className="text-xs text-slate-400">Note moyenne</p>
-            </div>
-          </div>
         </div>
       )}
 

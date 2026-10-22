@@ -374,7 +374,7 @@ export const MediaModal: React.FC<MediaModalProps> = ({
   // Déterminer si le média est déjà disponible sur le serveur
   const isAvailableOnServer = Boolean(
     jellyfinItem?.inJellyfin ||
-    arrStatus?.inLibrary ||
+    (arrStatus?.inLibrary && arrStatus?.downloaded) ||
     seerStatus?.status === 4 ||
     seerStatus?.status === 5
   );
@@ -609,14 +609,14 @@ export const MediaModal: React.FC<MediaModalProps> = ({
                         </a>
                       )}
                     </div>
-                  ) : Boolean(seerStatus?.requested || seerStatus?.status === 2 || seerStatus?.status === 3) ? (
-                    /* CAS 2: Déjà demandé sur Seer (en attente ou en cours de téléchargement) */
+                  ) : Boolean(seerStatus?.requested || seerStatus?.status === 2 || seerStatus?.status === 3 || (arrStatus?.inLibrary && !arrStatus?.downloaded)) ? (
+                    /* CAS 2: Déjà demandé sur Seer ou Sonarr/Radarr (en attente ou en recherche/traitement) */
                     <div className="flex flex-wrap items-center gap-2">
                       <div className="flex items-center gap-2">
-                        {seerStatus?.status === 3 ? (
+                        {seerStatus?.status === 3 || (arrStatus?.inLibrary && !arrStatus?.downloaded) ? (
                           <span className="flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-xl bg-amber-500/20 text-amber-400 border border-amber-500/30">
-                            <HardDrive className="w-4 h-4 animate-pulse" />
-                            Téléchargement en cours
+                            <Clock className="w-4 h-4" />
+                            Demande approuvée (en recherche)
                           </span>
                         ) : (
                           <span className="flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-xl bg-primary-500/20 text-primary-400 border border-primary-500/30">

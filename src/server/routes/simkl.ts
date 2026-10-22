@@ -123,9 +123,14 @@ router.post('/oauth/callback', async (req: AuthenticatedRequest, res: Response):
       userId
     );
 
+    // Déclencher automatiquement la synchronisation initiale Simkl -> Frame
+    SimklService.syncSimklToFrame(userId, tokenData.access_token, effectiveClientId)
+      .then((stats) => console.log(`[Simkl] Auto-sync réussie pour user ${userId}: ${stats.importedMovies} films, ${stats.importedShows} séries`))
+      .catch((err) => console.error(`[Simkl] Erreur auto-sync pour user ${userId}:`, err));
+
     res.json({
       success: true,
-      message: `Compte Simkl lié avec succès (${test.user?.name || 'Utilisateur'}) !`,
+      message: `Compte Simkl lié avec succès (${test.user?.name || 'Utilisateur'}) ! Synchronisation de votre historique lancée.`,
       user: test.user,
     });
   } catch (err: any) {
@@ -199,9 +204,14 @@ router.post('/pin/check', async (req: AuthenticatedRequest, res: Response): Prom
         userId
       );
 
+      // Déclencher automatiquement la synchronisation initiale Simkl -> Frame
+      SimklService.syncSimklToFrame(userId, check.access_token, effectiveClientId)
+        .then((stats) => console.log(`[Simkl PIN] Auto-sync réussie pour user ${userId}: ${stats.importedMovies} films, ${stats.importedShows} séries`))
+        .catch((err) => console.error(`[Simkl PIN] Erreur auto-sync pour user ${userId}:`, err));
+
       res.json({
         authorized: true,
-        message: `Compte Simkl lié avec succès (${test.user?.name || 'Utilisateur'}) !`,
+        message: `Compte Simkl lié avec succès (${test.user?.name || 'Utilisateur'}) ! Synchronisation de votre historique lancée.`,
       });
       return;
     }
@@ -236,7 +246,12 @@ router.post('/link', async (req: AuthenticatedRequest, res: Response): Promise<v
     const stmt = db.prepare('UPDATE users SET simkl_access_token = ?, simkl_user_id = ?, simkl_client_id = ? WHERE id = ?');
     stmt.run(accessToken.trim(), test.user?.id ? test.user.id.toString() : null, clientId?.trim() || null, userId);
 
-    res.json({ success: true, message: `Compte Simkl lié avec succès (${test.user?.name || 'Utilisateur'}) !` });
+    // Déclencher automatiquement la synchronisation initiale Simkl -> Frame
+    SimklService.syncSimklToFrame(userId, accessToken.trim(), clientId?.trim())
+      .then((stats) => console.log(`[Simkl Link] Auto-sync réussie pour user ${userId}: ${stats.importedMovies} films, ${stats.importedShows} séries`))
+      .catch((err) => console.error(`[Simkl Link] Erreur auto-sync pour user ${userId}:`, err));
+
+    res.json({ success: true, message: `Compte Simkl lié avec succès (${test.user?.name || 'Utilisateur'}) ! Synchronisation de votre historique lancée.` });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }

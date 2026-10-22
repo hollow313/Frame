@@ -10,6 +10,7 @@ export type SettingKey =
   | 'TMDB_API_KEY'
   | 'SEER_URL'
   | 'SEER_API_KEY'
+  | 'SEER_DEFAULT_USER_ID'
   | 'SONARR_URL'
   | 'SONARR_API_KEY'
   | 'RADARR_URL'
