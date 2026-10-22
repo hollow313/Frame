@@ -17,7 +17,7 @@ export interface JellyfinSession {
 }
 
 export class JellyfinService {
-  private static getUrl(): string {
+  public static getUrl(): string {
     return (getSetting('JELLYFIN_URL') || '').replace(/\/$/, '');
   }
 
@@ -25,12 +25,161 @@ export class JellyfinService {
     return Boolean(this.getUrl());
   }
 
-  private static getAuthHeader(token?: string): string {
+  public static getAuthHeader(token?: string): string {
     let header = 'MediaBrowser Client="Frame", Device="Frame Web", DeviceId="frame-media-app", Version="1.0.0"';
     if (token) {
       header += `, Token="${token}"`;
     }
     return header;
+  }
+
+  /**
+   * Tester la connexion globale au serveur Jellyfin
+   */
+  public static async testServer(overrideUrl?: string): Promise<{ success: boolean; version?: string; message: string }> {
+    const rawUrl = overrideUrl || this.getUrl();
+    if (!rawUrl) return { success: false, message: 'URL Jellyfin non configurée dans les paramètres.' };
+    const url = rawUrl.replace(/\/$/, '');
+
+    try {
+      const res = await fetch(`${url}/System/Info/Public`, {
+        headers: {
+          'Accept': 'application/json',
+          'Authorization': this.getAuthHeader(),
+          'X-Emby-Authorization': this.getAuthHeader(),
+        },
+      });
+
+      if (!res.ok) {
+        const text = await res.text().catch(() => '');
+        throw new Error(`HTTP ${res.status}: ${text || res.statusText}`);
+      }
+
+      const data = await res.json() as { Version?: string; ServerName?: string };
+      return { 
+        success: true, 
+        version: data.Version, 
+        message: `Connecté avec succès à Jellyfin (${data.ServerName || 'Serveur'}, v${data.Version || 'inconnue'}) !` 
+      };
+    } catch (e: any) {
+      return { 
+        success: false, 
+        message: `Impossible de joindre Jellyfin à « ${url} » : ${e.message}. Note: si Frame tourne dans Docker, n'utilisez pas "localhost" mais l'adresse IP du serveur (ex: http://192.168.x.x:8096).` 
+      };
+    }
+  }
+
+  /**
+   * Authentifier un utilisateur Jellyfin par identifiant et mot de passe
+   */
+  public static async authenticateUser(
+    username: string, 
+    password: string, 
+    serverUrlOverride?: string
+  ): Promise<{
+    userId: string;
+    accessToken: string;
+    serverName: string;
+  }> {
+    const rawUrl = serverUrlOverride || this.getUrl();
+    if (!rawUrl) {
+      throw new Error('Veuillez renseigner l\'URL de votre serveur Jellyfin (ex: http://192.168.1.50:8096).');
+    }
+    const url = rawUrl.replace(/\/$/, '');
+
+    try {
+      const res = await fetch(`${url}/Users/AuthenticateByName`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+          'Authorization': this.getAuthHeader(),
+          'X-Emby-Authorization': this.getAuthHeader(),
+        },
+        body: JSON.stringify({
+          Username: username.trim(),
+          Pw: password || '',
+        }),
+      });
+
+      if (!res.ok) {
+        const errText = await res.text().catch(() => '');
+        if (res.status === 401) {
+          throw new Error(`Jellyfin a rejeté ces identifiants (401 Non Autorisé). Vérifiez que l'identifiant « ${username} » et le mot de passe sont corrects.`);
+        } else if (res.status === 404) {
+          throw new Error(`Serveur Jellyfin introuvable à l'adresse « ${url} » (404). Vérifiez l'URL et le port (ex: http://192.168.x.x:8096).`);
+        } else {
+          throw new Error(`Jellyfin a renvoyé une erreur (${res.status}): ${errText || 'Connexion refusée'}`);
+        }
+      }
+
+      const data = await res.json() as any;
+      if (!data.User || !data.AccessToken) {
+        throw new Error('Réponse inattendue de Jellyfin (jeton de session manquant).');
+      }
+
+      return {
+        userId: data.User.Id,
+        accessToken: data.AccessToken,
+        serverName: data.ServerId || 'Jellyfin',
+      };
+    } catch (fetchErr: any) {
+      if (fetchErr.message && (fetchErr.message.includes('Jellyfin a rejeté') || fetchErr.message.includes('introuvable'))) {
+        throw fetchErr;
+      }
+      throw new Error(`Impossible de contacter Jellyfin sur « ${url} » : ${fetchErr.message}. Attention : dans un conteneur Docker, n'utilisez pas "localhost" mais l'adresse IP de votre serveur.`);
+    }
+  }
+
+  /**
+   * Lier un compte Jellyfin directement via une Clé API Jellyfin ou User Token
+   */
+  public static async authenticateWithApiKey(
+    apiKey: string,
+    usernameOrId?: string,
+    serverUrlOverride?: string
+  ): Promise<{
+    userId: string;
+    accessToken: string;
+    serverName: string;
+  }> {
+    const rawUrl = serverUrlOverride || this.getUrl();
+    if (!rawUrl) throw new Error('URL Jellyfin non configurée.');
+    const url = rawUrl.replace(/\/$/, '');
+
+    try {
+      const res = await fetch(`${url}/Users`, {
+        headers: {
+          'Accept': 'application/json',
+          'Authorization': this.getAuthHeader(apiKey.trim()),
+          'X-Emby-Token': apiKey.trim(),
+        },
+      });
+
+      if (!res.ok) {
+        throw new Error(`Clé API Jellyfin rejetée (${res.status}).`);
+      }
+
+      const users = await res.json() as any[];
+      if (!users || users.length === 0) {
+        throw new Error('Aucun utilisateur trouvé sur ce serveur Jellyfin.');
+      }
+
+      let matchedUser = users[0];
+      if (usernameOrId && usernameOrId.trim()) {
+        const target = usernameOrId.trim().toLowerCase();
+        const found = users.find((u) => u.Name.toLowerCase() === target || u.Id.toLowerCase() === target);
+        if (found) matchedUser = found;
+      }
+
+      return {
+        userId: matchedUser.Id,
+        accessToken: apiKey.trim(),
+        serverName: matchedUser.ServerId || 'Jellyfin',
+      };
+    } catch (e: any) {
+      throw new Error(`Erreur validation Clé API Jellyfin: ${e.message}`);
+    }
   }
 
   /**
@@ -41,10 +190,12 @@ export class JellyfinService {
     jellyfinUserId: string,
     tmdbId: number,
     title?: string,
-    mediaType: 'movie' | 'tv' = 'movie'
+    mediaType: 'movie' | 'tv' = 'movie',
+    serverUrlOverride?: string
   ): Promise<{ found: boolean; itemId?: string; name?: string; serverUrl: string }> {
-    const url = this.getUrl();
-    if (!url || !accessToken) return { found: false, serverUrl: url };
+    const rawUrl = serverUrlOverride || this.getUrl();
+    if (!rawUrl || !accessToken) return { found: false, serverUrl: rawUrl || '' };
+    const url = rawUrl.replace(/\/$/, '');
 
     const typeFilter = mediaType === 'movie' ? 'Movie' : 'Series';
 
@@ -54,6 +205,7 @@ export class JellyfinService {
       const res = await fetch(queryUrl, {
         headers: {
           'X-Emby-Authorization': this.getAuthHeader(accessToken),
+          'Authorization': this.getAuthHeader(accessToken),
         },
       });
 
@@ -65,12 +217,13 @@ export class JellyfinService {
         }
       }
 
-      // 2. Repli par recherche de titre si non trouvé par ID TMDB direct
+      // 2. Repli par recherche de titre
       if (title) {
         const searchUrl = `${url}/Users/${jellyfinUserId}/Items?Recursive=true&SearchTerm=${encodeURIComponent(title)}&IncludeItemTypes=${typeFilter}&Limit=1`;
         const searchRes = await fetch(searchUrl, {
           headers: {
             'X-Emby-Authorization': this.getAuthHeader(accessToken),
+            'Authorization': this.getAuthHeader(accessToken),
           },
         });
 
@@ -88,73 +241,26 @@ export class JellyfinService {
       return { found: false, serverUrl: url };
     }
   }
-  public static async testServer(): Promise<{ success: boolean; version?: string; message: string }> {
-    const url = this.getUrl();
-    if (!url) return { success: false, message: 'URL Jellyfin non configurée' };
-
-    try {
-      const res = await fetch(`${url}/System/Info/Public`);
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = await res.json() as { Version: string; ServerName: string };
-      return { success: true, version: data.Version, message: `Connecté à ${data.ServerName} (v${data.Version})` };
-    } catch (e: any) {
-      return { success: false, message: e.message || 'Erreur connexion Jellyfin' };
-    }
-  }
-
-  /**
-   * Authentifier un utilisateur spécifique sur Jellyfin pour lier son profil personnel
-   */
-  public static async authenticateUser(username: string, password: string): Promise<{
-    userId: string;
-    accessToken: string;
-    serverName: string;
-  }> {
-    const url = this.getUrl();
-    if (!url) throw new Error('Serveur Jellyfin non configuré sur Frame.');
-
-    const res = await fetch(`${url}/Users/AuthenticateByName`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-Emby-Authorization': this.getAuthHeader(),
-      },
-      body: JSON.stringify({
-        Username: username,
-        Pw: password,
-      }),
-    });
-
-    if (!res.ok) {
-      throw new Error('Identifiants Jellyfin incorrects.');
-    }
-
-    const data = await res.json() as any;
-    return {
-      userId: data.User.Id,
-      accessToken: data.AccessToken,
-      serverName: data.ServerId || 'Jellyfin',
-    };
-  }
 
   /**
    * Obtenir ce que l'utilisateur est actuellement en train de regarder sur Jellyfin
    */
-  public static async getCurrentlyPlaying(accessToken: string, jellyfinUserId: string): Promise<any[]> {
-    const url = this.getUrl();
-    if (!url || !accessToken) return [];
+  public static async getCurrentlyPlaying(accessToken: string, jellyfinUserId: string, serverUrlOverride?: string): Promise<any[]> {
+    const rawUrl = serverUrlOverride || this.getUrl();
+    if (!rawUrl || !accessToken) return [];
+    const url = rawUrl.replace(/\/$/, '');
 
     try {
       const res = await fetch(`${url}/Sessions`, {
         headers: {
           'X-Emby-Authorization': this.getAuthHeader(accessToken),
+          'Authorization': this.getAuthHeader(accessToken),
         },
       });
 
       if (!res.ok) return [];
       const sessions = await res.json() as any[];
 
-      // Filtrer les sessions de cet utilisateur avec un média en cours de lecture
       const userSessions = sessions.filter((s) => s.UserId === jellyfinUserId && s.NowPlayingItem);
 
       return userSessions.map((s) => {
@@ -182,14 +288,21 @@ export class JellyfinService {
   /**
    * Synchroniser l'historique complet d'un utilisateur depuis Jellyfin vers Frame
    */
-  public static async syncWatchedFromJellyfin(frameUserId: number, accessToken: string, jellyfinUserId: string): Promise<{ importedCount: number }> {
-    const url = this.getUrl();
-    if (!url || !accessToken) throw new Error('Jellyfin non connecté');
+  public static async syncWatchedFromJellyfin(
+    frameUserId: number, 
+    accessToken: string, 
+    jellyfinUserId: string,
+    serverUrlOverride?: string
+  ): Promise<{ importedCount: number }> {
+    const rawUrl = serverUrlOverride || this.getUrl();
+    if (!rawUrl || !accessToken) throw new Error('Jellyfin non connecté');
+    const url = rawUrl.replace(/\/$/, '');
 
     const queryUrl = `${url}/Users/${jellyfinUserId}/Items?Recursive=true&Filters=IsPlayed&IncludeItemTypes=Movie,Series&Fields=ProviderIds,Overview,Genres,PremiereDate`;
     const res = await fetch(queryUrl, {
       headers: {
         'X-Emby-Authorization': this.getAuthHeader(accessToken),
+        'Authorization': this.getAuthHeader(accessToken),
       },
     });
 

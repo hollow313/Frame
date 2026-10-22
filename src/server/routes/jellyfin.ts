@@ -6,6 +6,25 @@ import db from '../db/index.js';
 const router = Router();
 router.use(authenticateToken);
 
+// Récupérer les infos sur l'URL du serveur Jellyfin pour cet utilisateur
+router.get('/server-info', (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const userId = req.user!.id;
+    const userStmt = db.prepare('SELECT jellyfin_server_url FROM users WHERE id = ?');
+    const user = userStmt.get(userId) as any;
+
+    const defaultUrl = JellyfinService.getUrl();
+    const effectiveUrl = user?.jellyfin_server_url || defaultUrl || '';
+
+    res.json({
+      serverUrl: effectiveUrl,
+      isConfigured: Boolean(effectiveUrl),
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Vérifier si un média spécifique est présent dans Jellyfin pour cet utilisateur
 router.get('/check/:mediaType/:tmdbId', async (req: AuthenticatedRequest, res: Response) => {
   try {
@@ -13,7 +32,7 @@ router.get('/check/:mediaType/:tmdbId', async (req: AuthenticatedRequest, res: R
     const { mediaType, tmdbId } = req.params;
     const title = req.query.title as string | undefined;
 
-    const userStmt = db.prepare('SELECT jellyfin_user_id, jellyfin_access_token FROM users WHERE id = ?');
+    const userStmt = db.prepare('SELECT jellyfin_user_id, jellyfin_access_token, jellyfin_server_url FROM users WHERE id = ?');
     const user = userStmt.get(userId) as any;
 
     if (!user || !user.jellyfin_access_token || !user.jellyfin_user_id) {
@@ -26,7 +45,8 @@ router.get('/check/:mediaType/:tmdbId', async (req: AuthenticatedRequest, res: R
       user.jellyfin_user_id,
       parseInt(tmdbId, 10),
       title,
-      mediaType as 'movie' | 'tv'
+      mediaType as 'movie' | 'tv',
+      user.jellyfin_server_url
     );
 
     res.json({
@@ -40,35 +60,39 @@ router.get('/check/:mediaType/:tmdbId', async (req: AuthenticatedRequest, res: R
   }
 });
 
-// Tester le serveur Jellyfin
-router.get('/test-server', async (_req, res) => {
+// Tester la connectivité au serveur Jellyfin
+router.post('/test-server', async (req, res) => {
   try {
-    const test = await JellyfinService.testServer();
+    const { url } = req.body;
+    const test = await JellyfinService.testServer(url);
     res.json(test);
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
 });
 
-// Lier son compte Jellyfin personnel avec identifiant et mot de passe
+// Lier son compte Jellyfin personnel (par identifiant/mot de passe OU clé API)
 router.post('/link', async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   try {
     const userId = req.user!.id;
-    const { username, password } = req.body;
+    const { username, password, apiKey, serverUrl } = req.body;
 
-    if (!username || !password) {
-      res.status(400).json({ error: 'Identifiant et mot de passe Jellyfin requis' });
+    let auth;
+    if (apiKey && apiKey.trim()) {
+      auth = await JellyfinService.authenticateWithApiKey(apiKey.trim(), username, serverUrl);
+    } else if (username) {
+      auth = await JellyfinService.authenticateUser(username, password || '', serverUrl);
+    } else {
+      res.status(400).json({ error: 'Veuillez renseigner un identifiant et mot de passe, ou une clé API Jellyfin.' });
       return;
     }
 
-    const auth = await JellyfinService.authenticateUser(username, password);
-
-    const stmt = db.prepare('UPDATE users SET jellyfin_user_id = ?, jellyfin_access_token = ? WHERE id = ?');
-    stmt.run(auth.userId, auth.accessToken, userId);
+    const stmt = db.prepare('UPDATE users SET jellyfin_user_id = ?, jellyfin_access_token = ?, jellyfin_server_url = ? WHERE id = ?');
+    stmt.run(auth.userId, auth.accessToken, serverUrl?.trim() || null, userId);
 
     res.json({
       success: true,
-      message: `Compte Jellyfin « ${username} » lié avec succès !`,
+      message: `Compte Jellyfin (${auth.serverName}) lié avec succès !`,
       userId: auth.userId,
     });
   } catch (err: any) {
@@ -92,7 +116,7 @@ router.post('/unlink', (req: AuthenticatedRequest, res: Response) => {
 router.post('/sync', async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   try {
     const userId = req.user!.id;
-    const userStmt = db.prepare('SELECT jellyfin_user_id, jellyfin_access_token FROM users WHERE id = ?');
+    const userStmt = db.prepare('SELECT jellyfin_user_id, jellyfin_access_token, jellyfin_server_url FROM users WHERE id = ?');
     const user = userStmt.get(userId) as any;
 
     if (!user || !user.jellyfin_access_token || !user.jellyfin_user_id) {
@@ -100,7 +124,12 @@ router.post('/sync', async (req: AuthenticatedRequest, res: Response): Promise<v
       return;
     }
 
-    const result = await JellyfinService.syncWatchedFromJellyfin(userId, user.jellyfin_access_token, user.jellyfin_user_id);
+    const result = await JellyfinService.syncWatchedFromJellyfin(
+      userId, 
+      user.jellyfin_access_token, 
+      user.jellyfin_user_id,
+      user.jellyfin_server_url
+    );
 
     res.json({
       success: true,
@@ -116,7 +145,7 @@ router.post('/sync', async (req: AuthenticatedRequest, res: Response): Promise<v
 router.get('/now-playing', async (req: AuthenticatedRequest, res: Response) => {
   try {
     const userId = req.user!.id;
-    const userStmt = db.prepare('SELECT jellyfin_user_id, jellyfin_access_token FROM users WHERE id = ?');
+    const userStmt = db.prepare('SELECT jellyfin_user_id, jellyfin_access_token, jellyfin_server_url FROM users WHERE id = ?');
     const user = userStmt.get(userId) as any;
 
     if (!user || !user.jellyfin_access_token || !user.jellyfin_user_id) {
@@ -124,7 +153,11 @@ router.get('/now-playing', async (req: AuthenticatedRequest, res: Response) => {
       return;
     }
 
-    const playing = await JellyfinService.getCurrentlyPlaying(user.jellyfin_access_token, user.jellyfin_user_id);
+    const playing = await JellyfinService.getCurrentlyPlaying(
+      user.jellyfin_access_token, 
+      user.jellyfin_user_id,
+      user.jellyfin_server_url
+    );
     res.json({ active: playing.length > 0, items: playing });
   } catch (err: any) {
     res.status(500).json({ error: err.message });

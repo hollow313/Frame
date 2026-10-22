@@ -158,25 +158,35 @@ export const api = {
   checkRadarrMovie: (tmdbId: number) => request<ArrStatus>(`/sonarr/check/movie/${tmdbId}`),
 
   // ==================== SIMKL ====================
-  getSimklPin: () => request<{ user_code: string; verification_url: string; expires_in: number }>('/simkl/pin'),
-  checkSimklPin: (userCode: string) =>
+  getSimklPin: (clientId?: string) =>
+    request<{ user_code: string; verification_url: string; expires_in: number; client_id?: string }>(
+      `/simkl/pin${clientId ? `?clientId=${encodeURIComponent(clientId)}` : ''}`
+    ),
+  checkSimklPin: (userCode: string, clientId?: string) =>
     request<{ authorized: boolean; message?: string }>('/simkl/pin/check', {
       method: 'POST',
-      body: JSON.stringify({ userCode }),
+      body: JSON.stringify({ userCode, clientId }),
     }),
-  linkSimkl: (accessToken: string) =>
+  linkSimkl: (payload: { accessToken: string; clientId?: string }) =>
     request<{ success: boolean; message: string }>('/simkl/link', {
       method: 'POST',
-      body: JSON.stringify({ accessToken }),
+      body: JSON.stringify(payload),
     }),
   unlinkSimkl: () => request<{ success: boolean; message: string }>('/simkl/unlink', { method: 'POST' }),
   syncSimkl: () => request<{ success: boolean; message: string; stats: any }>('/simkl/sync', { method: 'POST' }),
 
   // ==================== JELLYFIN ====================
-  linkJellyfin: (credentials: { username: string; password: string }) =>
+  getJellyfinServerInfo: () =>
+    request<{ serverUrl: string; isConfigured: boolean }>('/jellyfin/server-info'),
+  testJellyfinServer: (url: string) =>
+    request<{ success: boolean; version?: string; message: string }>('/jellyfin/test-server', {
+      method: 'POST',
+      body: JSON.stringify({ url }),
+    }),
+  linkJellyfin: (payload: { username?: string; password?: string; apiKey?: string; serverUrl?: string }) =>
     request<{ success: boolean; message: string; userId: string }>('/jellyfin/link', {
       method: 'POST',
-      body: JSON.stringify(credentials),
+      body: JSON.stringify(payload),
     }),
   unlinkJellyfin: () => request<{ success: boolean; message: string }>('/jellyfin/unlink', { method: 'POST' }),
   syncJellyfin: () => request<{ success: boolean; message: string; result: any }>('/jellyfin/sync', { method: 'POST' }),

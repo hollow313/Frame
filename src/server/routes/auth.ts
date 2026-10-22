@@ -227,7 +227,7 @@ router.post('/login', async (req, res: Response): Promise<void> => {
 // Profil actuel
 router.get('/me', authenticateToken, (req: AuthenticatedRequest, res: Response) => {
   try {
-    const stmt = db.prepare('SELECT id, username, role, display_name, avatar_url, auth_provider, simkl_access_token, jellyfin_user_id, pref_include_movies, pref_include_tv, pref_include_anime, created_at FROM users WHERE id = ?');
+    const stmt = db.prepare('SELECT id, username, role, display_name, avatar_url, auth_provider, simkl_access_token, simkl_client_id, jellyfin_user_id, jellyfin_server_url, pref_include_movies, pref_include_tv, pref_include_anime, created_at FROM users WHERE id = ?');
     const user = stmt.get(req.user!.id) as any;
 
     if (!user) {
@@ -243,7 +243,9 @@ router.get('/me', authenticateToken, (req: AuthenticatedRequest, res: Response) 
       avatarUrl: user.avatar_url,
       authProvider: user.auth_provider || 'local',
       simklConnected: Boolean(user.simkl_access_token),
+      simklClientId: user.simkl_client_id || null,
       jellyfinConnected: Boolean(user.jellyfin_user_id),
+      jellyfinServerUrl: user.jellyfin_server_url || null,
       prefIncludeMovies: user.pref_include_movies !== 0,
       prefIncludeTv: user.pref_include_tv !== 0,
       prefIncludeAnime: user.pref_include_anime === 1,

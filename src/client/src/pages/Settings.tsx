@@ -15,7 +15,10 @@ import {
   ExternalLink,
   Shield,
   Layers,
-  Lock
+  Lock,
+  Info,
+  HelpCircle,
+  Link as LinkIcon
 } from 'lucide-react';
 import { api } from '../services/api';
 import { useAuth } from '../context/AuthContext';
@@ -48,15 +51,27 @@ export const Settings: React.FC = () => {
   const [ssoHeader, setSsoHeader] = useState('Remote-User');
 
   // Form states for User Simkl
+  const [userSimklClientId, setUserSimklClientId] = useState('');
   const [simklPinData, setSimklPinData] = useState<{ user_code: string; verification_url: string } | null>(null);
+  const [simklGeneratingPin, setSimklGeneratingPin] = useState(false);
   const [checkingPin, setCheckingPin] = useState(false);
-  const [simklToken, setSimklToken] = useState('');
+  const [simklPinError, setSimklPinError] = useState<string | null>(null);
+  const [simklManualToken, setSimklManualToken] = useState('');
+  const [linkingSimklManual, setLinkingSimklManual] = useState(false);
+  const [simklManualError, setSimklManualError] = useState<string | null>(null);
   const [syncingSimkl, setSyncingSimkl] = useState(false);
   const [simklSyncMessage, setSimklSyncMessage] = useState<string | null>(null);
 
   // Form states for User Jellyfin
+  const [userJellyfinUrl, setUserJellyfinUrl] = useState('');
+  const [jellyfinAuthMode, setJellyfinAuthMode] = useState<'credentials' | 'apikey'>('credentials');
   const [jellyfinUsername, setJellyfinUsername] = useState('');
   const [jellyfinPassword, setJellyfinPassword] = useState('');
+  const [jellyfinApiKey, setJellyfinApiKey] = useState('');
+  const [jellyfinTestingServer, setJellyfinTestingServer] = useState(false);
+  const [jellyfinServerTestResult, setJellyfinServerTestResult] = useState<{ success: boolean; message: string } | null>(null);
+  const [jellyfinLinking, setJellyfinLinking] = useState(false);
+  const [jellyfinError, setJellyfinError] = useState<string | null>(null);
   const [syncingJellyfin, setSyncingJellyfin] = useState(false);
   const [jellyfinSyncMessage, setJellyfinSyncMessage] = useState<string | null>(null);
 
@@ -73,7 +88,17 @@ export const Settings: React.FC = () => {
 
   useEffect(() => {
     loadSettings();
-  }, [isAdmin]);
+    if (user?.simklClientId) {
+      setUserSimklClientId(user.simklClientId);
+    }
+    if (user?.jellyfinServerUrl) {
+      setUserJellyfinUrl(user.jellyfinServerUrl);
+    } else {
+      api.getJellyfinServerInfo().then((info) => {
+        if (info.serverUrl) setUserJellyfinUrl(info.serverUrl);
+      }).catch(() => {});
+    }
+  }, [isAdmin, user]);
 
   const loadSettings = async () => {
     setLoading(true);
@@ -157,32 +182,57 @@ export const Settings: React.FC = () => {
     }
   };
 
-  // ================= SIMKL PIN FLOW =================
+  // ================= SIMKL PIN FLOW & MANUAL =================
   const handleStartSimklPin = async () => {
+    setSimklGeneratingPin(true);
+    setSimklPinError(null);
     try {
-      const pin = await api.getSimklPin();
+      const pin = await api.getSimklPin(userSimklClientId.trim() || undefined);
       setSimklPinData(pin);
     } catch (err: any) {
-      alert(err.message || 'Erreur génération PIN Simkl');
+      setSimklPinError(err.message || 'Impossible de générer le code PIN Simkl.');
+    } finally {
+      setSimklGeneratingPin(false);
     }
   };
 
   const handleCheckSimklPin = async () => {
     if (!simklPinData) return;
     setCheckingPin(true);
+    setSimklPinError(null);
     try {
-      const res = await api.checkSimklPin(simklPinData.user_code);
+      const res = await api.checkSimklPin(simklPinData.user_code, userSimklClientId.trim() || undefined);
       if (res.authorized) {
         alert(res.message);
         setSimklPinData(null);
-        refreshUser();
+        await refreshUser();
       } else {
-        alert(res.message || 'Le code n\'a pas encore été validé sur Simkl.');
+        setSimklPinError(res.message || 'Le code n\'a pas encore été validé sur Simkl. Cliquez sur « Valider sur Simkl », connectez-vous et autorisez Frame.');
       }
     } catch (err: any) {
-      alert(err.message || 'Erreur vérification code');
+      setSimklPinError(err.message || 'Erreur vérification code');
     } finally {
       setCheckingPin(false);
+    }
+  };
+
+  const handleLinkSimklManual = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!simklManualToken.trim()) return;
+    setLinkingSimklManual(true);
+    setSimklManualError(null);
+    try {
+      const res = await api.linkSimkl({
+        accessToken: simklManualToken.trim(),
+        clientId: userSimklClientId.trim() || undefined,
+      });
+      alert(res.message);
+      setSimklManualToken('');
+      await refreshUser();
+    } catch (err: any) {
+      setSimklManualError(err.message || 'Erreur lors de la validation du token Simkl');
+    } finally {
+      setLinkingSimklManual(false);
     }
   };
 
@@ -210,15 +260,61 @@ export const Settings: React.FC = () => {
   };
 
   // ================= JELLYFIN USER FLOW =================
+  const handleTestJellyfinServer = async () => {
+    if (!userJellyfinUrl.trim()) {
+      setJellyfinServerTestResult({
+        success: false,
+        message: 'Veuillez saisir une URL de serveur Jellyfin (ex: http://192.168.1.50:8096)',
+      });
+      return;
+    }
+    setJellyfinTestingServer(true);
+    setJellyfinServerTestResult(null);
+    try {
+      const res = await api.testJellyfinServer(userJellyfinUrl.trim());
+      setJellyfinServerTestResult(res);
+    } catch (err: any) {
+      setJellyfinServerTestResult({
+        success: false,
+        message: err.message || 'Erreur lors du test de connexion',
+      });
+    } finally {
+      setJellyfinTestingServer(false);
+    }
+  };
+
   const handleLinkJellyfin = async (e: React.FormEvent) => {
     e.preventDefault();
+    setJellyfinLinking(true);
+    setJellyfinError(null);
     try {
-      const res = await api.linkJellyfin({ username: jellyfinUsername, password: jellyfinPassword });
+      const payload: { username?: string; password?: string; apiKey?: string; serverUrl?: string } = {
+        serverUrl: userJellyfinUrl.trim() || undefined,
+      };
+
+      if (jellyfinAuthMode === 'apikey') {
+        if (!jellyfinApiKey.trim()) {
+          throw new Error('Veuillez renseigner votre clé API Jellyfin.');
+        }
+        payload.apiKey = jellyfinApiKey.trim();
+        if (jellyfinUsername.trim()) payload.username = jellyfinUsername.trim();
+      } else {
+        if (!jellyfinUsername.trim()) {
+          throw new Error('Veuillez renseigner votre nom d\'utilisateur Jellyfin.');
+        }
+        payload.username = jellyfinUsername.trim();
+        payload.password = jellyfinPassword;
+      }
+
+      const res = await api.linkJellyfin(payload);
       alert(res.message);
       setJellyfinPassword('');
-      refreshUser();
+      setJellyfinApiKey('');
+      await refreshUser();
     } catch (err: any) {
-      alert(err.message || 'Erreur connexion Jellyfin');
+      setJellyfinError(err.message || 'Erreur connexion Jellyfin');
+    } finally {
+      setJellyfinLinking(false);
     }
   };
 
@@ -775,15 +871,15 @@ export const Settings: React.FC = () => {
             </div>
           </form>
           {/* SIMKL LINK (PIN CODE FLOW & DIRECT) */}
-          <div className="p-6 rounded-2xl bg-dark-900 border border-white/5 space-y-4">
+          <div className="p-6 rounded-2xl bg-dark-900 border border-white/5 space-y-5">
             <div className="flex items-center gap-3">
               <div className="w-10 h-10 rounded-xl bg-primary-600/20 text-primary-400 flex items-center justify-center">
                 <RefreshCw className="w-5 h-5" />
               </div>
               <div>
-                <h3 className="text-base font-bold text-white">Connexion Simkl Simplifiée</h3>
+                <h3 className="text-base font-bold text-white">Connexion Simkl</h3>
                 <p className="text-xs text-slate-400">
-                  Liez votre compte Simkl sans tracas grâce au code PIN en 1 clic.
+                  Synchronisez vos films et séries déjà visionnés sur Simkl directement avec Frame.
                 </p>
               </div>
             </div>
@@ -822,57 +918,139 @@ export const Settings: React.FC = () => {
               </div>
             ) : (
               <div className="space-y-4">
-                {/* Method 1: Instant PIN code */}
-                <div className="p-4 rounded-xl bg-dark-850 border border-white/5 space-y-3">
-                  <span className="text-xs font-bold text-white block">Méthode recommandée : Connexion par code PIN (1-clic)</span>
-                  <p className="text-xs text-slate-400">
-                    Cliquez ci-dessous pour générer un code court et l'approuver sur Simkl sans aucune configuration d'URL compliquée.
-                  </p>
+                {/* Guide pas-à-pas Simkl */}
+                <div className="p-4 rounded-xl bg-dark-850/70 border border-white/5 space-y-3">
+                  <div className="flex items-center gap-2 text-xs font-bold text-primary-400">
+                    <HelpCircle className="w-4 h-4" />
+                    <span>Comment obtenir votre Client ID Simkl (en 1 minute chrono) :</span>
+                  </div>
+                  <ol className="text-xs text-slate-300 space-y-1.5 list-decimal list-inside pl-1">
+                    <li>
+                      Allez sur{' '}
+                      <a
+                        href="https://simkl.com/settings/developer/new"
+                        target="_blank"
+                        rel="noreferrer"
+                        className="text-primary-400 underline hover:text-primary-300 inline-flex items-center gap-1"
+                      >
+                        simkl.com/settings/developer/new
+                        <ExternalLink className="w-3 h-3" />
+                      </a>
+                    </li>
+                    <li>
+                      Nom de l'application : <strong>Frame</strong>
+                    </li>
+                    <li>
+                      Dans le champ <strong>Redirect URLs</strong>, mettez simplement : <code className="bg-dark-900 px-1.5 py-0.5 rounded text-primary-300">https://simkl.com</code>
+                    </li>
+                    <li>
+                      Cliquez sur <strong>Save App</strong>, puis copiez le <strong>Client ID</strong> généré.
+                    </li>
+                  </ol>
+                </div>
 
-                  {simklPinData ? (
-                    <div className="p-3.5 rounded-xl bg-primary-600/15 border border-primary-500/30 space-y-3">
-                      <div className="flex items-center justify-between">
+                {/* Champ Client ID et Génération de PIN */}
+                <div className="p-4 rounded-xl bg-dark-850 border border-white/5 space-y-3">
+                  <label className="text-xs font-bold text-white block">
+                    Votre Client ID Simkl :
+                  </label>
+                  <div className="flex flex-col sm:flex-row gap-2">
+                    <input
+                      type="text"
+                      value={userSimklClientId}
+                      onChange={(e) => setUserSimklClientId(e.target.value)}
+                      placeholder="Collez ici votre Client ID Simkl (ex: 82fd...)"
+                      className="flex-1 bg-dark-900 border border-white/10 rounded-xl px-3 py-2 text-xs text-slate-100 font-mono focus:outline-none focus:border-primary-500"
+                    />
+                    <button
+                      type="button"
+                      onClick={handleStartSimklPin}
+                      disabled={simklGeneratingPin}
+                      className="px-4 py-2 bg-primary-600 hover:bg-primary-500 text-white text-xs font-bold rounded-xl shadow-glow transition-all hover:scale-105 disabled:opacity-50 whitespace-nowrap"
+                    >
+                      {simklGeneratingPin ? 'Génération...' : 'Générer mon code PIN Simkl'}
+                    </button>
+                  </div>
+
+                  {simklPinError && (
+                    <div className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-300 text-xs flex items-start gap-2">
+                      <AlertCircle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
+                      <span>{simklPinError}</span>
+                    </div>
+                  )}
+
+                  {simklPinData && (
+                    <div className="p-4 rounded-xl bg-primary-600/15 border border-primary-500/30 space-y-3 mt-3">
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                         <div>
-                          <span className="text-[11px] text-primary-300 block">Votre code PIN Simkl :</span>
+                          <span className="text-[11px] text-primary-300 block font-medium">Votre code PIN à valider :</span>
                           <span className="text-2xl font-black text-white font-mono tracking-widest">{simklPinData.user_code}</span>
                         </div>
                         <a
                           href={simklPinData.verification_url}
                           target="_blank"
                           rel="noreferrer"
-                          className="flex items-center gap-1.5 px-4 py-2 bg-primary-600 hover:bg-primary-500 text-white text-xs font-bold rounded-xl shadow"
+                          className="flex items-center justify-center gap-1.5 px-4 py-2.5 bg-primary-600 hover:bg-primary-500 text-white text-xs font-bold rounded-xl shadow-glow transition-transform hover:scale-105"
                         >
-                          <span>Valider sur Simkl</span>
+                          <span>1. Valider sur Simkl</span>
                           <ExternalLink className="w-3.5 h-3.5" />
                         </a>
                       </div>
-                      <div className="flex justify-end">
+
+                      <div className="pt-2 border-t border-primary-500/20 flex flex-col sm:flex-row items-center justify-between gap-2">
+                        <p className="text-[11px] text-slate-300">
+                          Après avoir cliqué sur <strong>Approve</strong> sur Simkl, validez ici :
+                        </p>
                         <button
                           type="button"
                           onClick={handleCheckSimklPin}
                           disabled={checkingPin}
-                          className="px-4 py-1.5 bg-emerald-500 hover:bg-emerald-600 text-white text-xs font-bold rounded-xl"
+                          className="w-full sm:w-auto px-4 py-2 bg-emerald-500 hover:bg-emerald-600 text-white text-xs font-bold rounded-xl shadow transition-all hover:scale-105 disabled:opacity-50"
                         >
-                          {checkingPin ? 'Vérification...' : 'J\'ai validé le code sur Simkl !'}
+                          {checkingPin ? 'Vérification...' : '2. J\'ai validé le code sur Simkl !'}
                         </button>
                       </div>
                     </div>
-                  ) : (
-                    <button
-                      type="button"
-                      onClick={handleStartSimklPin}
-                      className="px-4 py-2 bg-primary-600 hover:bg-primary-500 text-white text-xs font-bold rounded-xl shadow-glow transition-all hover:scale-105"
-                    >
-                      Obtenir un code PIN Simkl
-                    </button>
                   )}
                 </div>
+
+                {/* Option alternative : Access Token direct */}
+                <details className="group p-3.5 rounded-xl bg-dark-850/50 border border-white/5 text-xs">
+                  <summary className="font-bold text-slate-400 hover:text-slate-200 cursor-pointer list-none flex items-center justify-between">
+                    <span>Ou lier directement avec un Access Token Simkl</span>
+                    <span className="text-[10px] text-primary-400 group-open:rotate-180 transition-transform">▼</span>
+                  </summary>
+                  <form onSubmit={handleLinkSimklManual} className="mt-3 pt-3 border-t border-white/5 space-y-2">
+                    <p className="text-[11px] text-slate-400">
+                      Si vous disposez déjà d'un jeton d'accès Simkl (OAuth Token), vous pouvez le coller directement ci-dessous :
+                    </p>
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        value={simklManualToken}
+                        onChange={(e) => setSimklManualToken(e.target.value)}
+                        placeholder="Bearer token Simkl..."
+                        className="flex-1 bg-dark-900 border border-white/10 rounded-xl px-3 py-1.5 text-xs text-slate-100 font-mono"
+                      />
+                      <button
+                        type="submit"
+                        disabled={linkingSimklManual}
+                        className="px-3 py-1.5 bg-dark-800 hover:bg-dark-750 text-white font-bold rounded-xl border border-white/10 disabled:opacity-50"
+                      >
+                        {linkingSimklManual ? 'Validation...' : 'Lier le token'}
+                      </button>
+                    </div>
+                    {simklManualError && (
+                      <p className="text-xs text-rose-400">{simklManualError}</p>
+                    )}
+                  </form>
+                </details>
               </div>
             )}
           </div>
 
           {/* JELLYFIN PER-USER LINK */}
-          <div className="p-6 rounded-2xl bg-dark-900 border border-white/5 space-y-4">
+          <div className="p-6 rounded-2xl bg-dark-900 border border-white/5 space-y-5">
             <div className="flex items-center gap-3">
               <div className="w-10 h-10 rounded-xl bg-indigo-600/20 text-indigo-400 flex items-center justify-center">
                 <Tv className="w-5 h-5" />
@@ -880,7 +1058,7 @@ export const Settings: React.FC = () => {
               <div>
                 <h3 className="text-base font-bold text-white">Mon Compte Jellyfin</h3>
                 <p className="text-xs text-slate-400">
-                  Liez votre compte utilisateur personnel Jellyfin pour importer votre statut de lecture exact.
+                  Liez votre compte Jellyfin personnel pour importer vos lectures et lancer vos médias dans l'application PC.
                 </p>
               </div>
             </div>
@@ -890,7 +1068,7 @@ export const Settings: React.FC = () => {
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2 text-indigo-400 text-xs font-bold">
                     <CheckCircle2 className="w-4 h-4" />
-                    <span>Compte Jellyfin lié avec succès</span>
+                    <span>Compte Jellyfin actuellement connecté à Frame</span>
                   </div>
                   <button
                     onClick={handleUnlinkJellyfin}
@@ -918,40 +1096,151 @@ export const Settings: React.FC = () => {
                 )}
               </div>
             ) : (
-              <form onSubmit={handleLinkJellyfin} className="p-4 rounded-xl bg-dark-850 border border-white/5 space-y-3">
-                <p className="text-xs text-slate-300">
-                  Entrez vos identifiants Jellyfin personnels. Frame s'y connecte pour extraire vos lectures :
-                </p>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <div>
-                    <label className="text-[11px] text-slate-400 block mb-1">Nom d'utilisateur Jellyfin</label>
-                    <input
-                      type="text"
-                      required
-                      value={jellyfinUsername}
-                      onChange={(e) => setJellyfinUsername(e.target.value)}
-                      placeholder="Identifiant Jellyfin..."
-                      className="w-full bg-dark-900 border border-white/10 rounded-xl px-3 py-1.5 text-xs text-slate-100"
-                    />
-                  </div>
-                  <div>
-                    <label className="text-[11px] text-slate-400 block mb-1">Mot de passe Jellyfin</label>
-                    <input
-                      type="password"
-                      required
-                      value={jellyfinPassword}
-                      onChange={(e) => setJellyfinPassword(e.target.value)}
-                      placeholder="Mot de passe..."
-                      className="w-full bg-dark-900 border border-white/10 rounded-xl px-3 py-1.5 text-xs text-slate-100"
-                    />
-                  </div>
+              <form onSubmit={handleLinkJellyfin} className="p-4 rounded-xl bg-dark-850 border border-white/5 space-y-4">
+                {/* Configuration URL Serveur Jellyfin */}
+                <div className="space-y-1.5">
+                  <label className="text-xs font-bold text-white flex items-center justify-between">
+                    <span>URL du serveur Jellyfin</span>
+                    <button
+                      type="button"
+                      onClick={handleTestJellyfinServer}
+                      disabled={jellyfinTestingServer}
+                      className="text-[11px] text-indigo-400 hover:text-indigo-300 underline font-semibold disabled:opacity-50"
+                    >
+                      {jellyfinTestingServer ? 'Test en cours...' : 'Tester la connexion au serveur'}
+                    </button>
+                  </label>
+                  <input
+                    type="text"
+                    value={userJellyfinUrl}
+                    onChange={(e) => setUserJellyfinUrl(e.target.value)}
+                    placeholder="http://192.168.1.50:8096"
+                    className="w-full bg-dark-900 border border-white/10 rounded-xl px-3 py-2 text-xs text-slate-100 font-mono focus:outline-none focus:border-indigo-500"
+                  />
+                  <p className="text-[11px] text-slate-400">
+                    💡 Si Frame tourne dans un conteneur Docker, n'utilisez pas <code className="bg-dark-900 px-1 py-0.5 rounded text-amber-300">localhost</code> mais l'adresse IP de votre serveur sur votre réseau local (ex: <code className="bg-dark-900 px-1 py-0.5 rounded text-indigo-300">http://192.168.x.x:8096</code>).
+                  </p>
                 </div>
-                <div className="flex justify-end pt-1">
+
+                {jellyfinServerTestResult && (
+                  <div className={`p-3 rounded-xl text-xs flex items-start gap-2 ${
+                    jellyfinServerTestResult.success 
+                      ? 'bg-emerald-500/10 border border-emerald-500/30 text-emerald-300' 
+                      : 'bg-rose-500/10 border border-rose-500/30 text-rose-300'
+                  }`}>
+                    {jellyfinServerTestResult.success ? (
+                      <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+                    ) : (
+                      <AlertCircle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
+                    )}
+                    <span>{jellyfinServerTestResult.message}</span>
+                  </div>
+                )}
+
+                {/* Onglets de méthode d'authentification */}
+                <div className="pt-2 border-t border-white/5 space-y-3">
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setJellyfinAuthMode('credentials')}
+                      className={`flex-1 py-1.5 text-xs font-bold rounded-xl transition-colors ${
+                        jellyfinAuthMode === 'credentials'
+                          ? 'bg-indigo-600 text-white shadow'
+                          : 'bg-dark-900 text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      Identifiants (Nom & Mot de passe)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setJellyfinAuthMode('apikey')}
+                      className={`flex-1 py-1.5 text-xs font-bold rounded-xl transition-colors ${
+                        jellyfinAuthMode === 'apikey'
+                          ? 'bg-indigo-600 text-white shadow'
+                          : 'bg-dark-900 text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      Clé API (Recommandé si LDAP / SSO)
+                    </button>
+                  </div>
+
+                  {jellyfinAuthMode === 'credentials' ? (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+                      <div>
+                        <label className="text-[11px] text-slate-400 block mb-1">Nom d'utilisateur Jellyfin</label>
+                        <input
+                          type="text"
+                          required
+                          value={jellyfinUsername}
+                          onChange={(e) => setJellyfinUsername(e.target.value)}
+                          placeholder="Votre nom d'utilisateur..."
+                          className="w-full bg-dark-900 border border-white/10 rounded-xl px-3 py-2 text-xs text-slate-100"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-[11px] text-slate-400 block mb-1">Mot de passe Jellyfin</label>
+                        <input
+                          type="password"
+                          value={jellyfinPassword}
+                          onChange={(e) => setJellyfinPassword(e.target.value)}
+                          placeholder="Votre mot de passe..."
+                          className="w-full bg-dark-900 border border-white/10 rounded-xl px-3 py-2 text-xs text-slate-100"
+                        />
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="space-y-3 pt-1">
+                      <div className="p-3 rounded-xl bg-indigo-950/40 border border-indigo-500/20 text-xs text-indigo-300">
+                        <p className="font-semibold mb-1">Comment générer une clé API sur Jellyfin ?</p>
+                        <p className="text-[11px] text-slate-300">
+                          Dans Jellyfin, rendez-vous dans <strong>Tableau de bord</strong> &gt; <strong>Avancé</strong> &gt; <strong>Clés d'API</strong> &gt; Cliquez sur <strong>+</strong> et donnez le nom <em>Frame</em>.
+                          Cette méthode fonctionne à 100%, même si vous utilisez l'authentification LLDAP ou Authelia sur Jellyfin !
+                        </p>
+                      </div>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <div>
+                          <label className="text-[11px] text-slate-400 block mb-1">Clé API Jellyfin</label>
+                          <input
+                            type="password"
+                            required
+                            value={jellyfinApiKey}
+                            onChange={(e) => setJellyfinApiKey(e.target.value)}
+                            placeholder="Clé d'API Jellyfin..."
+                            className="w-full bg-dark-900 border border-white/10 rounded-xl px-3 py-2 text-xs text-slate-100 font-mono"
+                          />
+                        </div>
+                        <div>
+                          <label className="text-[11px] text-slate-400 block mb-1">Nom d'utilisateur (optionnel)</label>
+                          <input
+                            type="text"
+                            value={jellyfinUsername}
+                            onChange={(e) => setJellyfinUsername(e.target.value)}
+                            placeholder="Votre pseudo Jellyfin..."
+                            className="w-full bg-dark-900 border border-white/10 rounded-xl px-3 py-2 text-xs text-slate-100"
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {jellyfinError && (
+                  <div className="p-3.5 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-300 text-xs flex items-start gap-2">
+                    <AlertCircle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
+                    <div className="space-y-1">
+                      <span className="font-bold block">Erreur de connexion :</span>
+                      <span>{jellyfinError}</span>
+                    </div>
+                  </div>
+                )}
+
+                <div className="flex justify-end pt-2">
                   <button
                     type="submit"
-                    className="px-4 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold shadow"
+                    disabled={jellyfinLinking}
+                    className="px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold shadow transition-transform hover:scale-105 disabled:opacity-50"
                   >
-                    Lier mon compte Jellyfin
+                    {jellyfinLinking ? 'Connexion en cours...' : 'Lier mon compte Jellyfin'}
                   </button>
                 </div>
               </form>

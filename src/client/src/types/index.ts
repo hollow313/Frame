@@ -107,7 +107,9 @@ export interface User {
   avatarUrl?: string;
   authProvider?: 'local' | 'ldap' | 'sso';
   simklConnected?: boolean;
+  simklClientId?: string;
   jellyfinConnected?: boolean;
+  jellyfinServerUrl?: string;
   prefIncludeMovies?: boolean;
   prefIncludeTv?: boolean;
   prefIncludeAnime?: boolean;

@@ -4,8 +4,9 @@ import db from '../db/index.js';
 const SIMKL_API_BASE = 'https://api.simkl.com';
 
 export class SimklService {
-  public static getClientId(): string {
-    return getSetting('SIMKL_CLIENT_ID') || 'c4cb413d31b79bf10e4530fcb749d217983ea1fa9ef310ba0a56bd3aa2674e14';
+  public static getClientId(override?: string): string {
+    const val = override || getSetting('SIMKL_CLIENT_ID') || '';
+    return val.trim();
   }
 
   public static isConfigured(): boolean {
@@ -13,37 +14,83 @@ export class SimklService {
   }
 
   /**
-   * Démarrer le flux d'authentification PIN Simkl (aucun redirect URI requis)
+   * Démarrer le flux d'authentification PIN Simkl (aucun redirect URI complexe requis)
    */
-  public static async getPin(): Promise<{ user_code: string; verification_url: string; expires_in: number }> {
-    const clientId = this.getClientId();
-    const res = await fetch(`${SIMKL_API_BASE}/oauth/pin?client_id=${clientId}`);
-    if (!res.ok) {
-      throw new Error('Impossible de générer le code PIN Simkl.');
+  public static async getPin(clientIdOverride?: string): Promise<{
+    user_code: string;
+    verification_url: string;
+    expires_in: number;
+    client_id: string;
+  }> {
+    const clientId = this.getClientId(clientIdOverride);
+    if (!clientId) {
+      throw new Error(
+        'Client ID Simkl manquant. Veuillez saisir votre Client ID Simkl (obtenu gratuitement sur https://simkl.com/settings/developer/new).'
+      );
     }
-    const data = await res.json() as any;
-    return {
-      user_code: data.user_code,
-      verification_url: data.verification_url || `https://simkl.com/pin?${data.user_code}`,
-      expires_in: data.expires_in || 900,
-    };
+
+    try {
+      const res = await fetch(`${SIMKL_API_BASE}/oauth/pin?client_id=${encodeURIComponent(clientId)}`);
+      if (!res.ok) {
+        let errorDetail = res.statusText;
+        try {
+          const errData = (await res.json()) as any;
+          if (errData.error === 'client_id_failed' || errData.message?.includes('client_id')) {
+            errorDetail =
+              'Client ID non reconnu par Simkl. Vérifiez que vous avez bien copié le Client ID depuis votre compte Simkl Developer et que votre app a une URL de redirection (ex: https://simkl.com).';
+          } else if (errData.message || errData.error) {
+            errorDetail = errData.message || errData.error;
+          }
+        } catch {
+          const text = await res.text().catch(() => '');
+          if (text) errorDetail = text;
+        }
+        throw new Error(`Erreur Simkl (${res.status}): ${errorDetail}`);
+      }
+
+      const data = (await res.json()) as any;
+      return {
+        user_code: data.user_code,
+        verification_url: data.verification_url || `https://simkl.com/pin?${data.user_code}`,
+        expires_in: data.expires_in || 900,
+        client_id: clientId,
+      };
+    } catch (e: any) {
+      if (e.message && (e.message.startsWith('Erreur Simkl') || e.message.includes('Client ID'))) {
+        throw e;
+      }
+      throw new Error(`Impossible de contacter l'API Simkl : ${e.message}`);
+    }
   }
 
   /**
    * Vérifier si l'utilisateur a validé le code PIN sur Simkl
    */
-  public static async checkPin(userCode: string): Promise<{ authorized: boolean; access_token?: string; message?: string }> {
-    const clientId = this.getClientId();
+  public static async checkPin(
+    userCode: string,
+    clientIdOverride?: string
+  ): Promise<{ authorized: boolean; access_token?: string; message?: string }> {
+    const clientId = this.getClientId(clientIdOverride);
+    if (!clientId) {
+      return { authorized: false, message: 'Client ID Simkl non spécifié.' };
+    }
+
     try {
-      const res = await fetch(`${SIMKL_API_BASE}/oauth/pin/${userCode}?client_id=${clientId}`);
+      const res = await fetch(
+        `${SIMKL_API_BASE}/oauth/pin/${encodeURIComponent(userCode)}?client_id=${encodeURIComponent(clientId)}`
+      );
       if (!res.ok) {
-        return { authorized: false, message: 'Code en attente ou expiré.' };
+        const text = await res.text().catch(() => '');
+        return {
+          authorized: false,
+          message: `Code en attente ou expiré (${res.status}: ${text || 'non autorisé'}).`,
+        };
       }
-      const data = await res.json() as any;
+      const data = (await res.json()) as any;
       if (data.result === 'OK' && data.access_token) {
         return { authorized: true, access_token: data.access_token };
       }
-      return { authorized: false, message: data.message || 'En attente de confirmation sur Simkl...' };
+      return { authorized: false, message: data.message || 'En attente de validation sur le site Simkl...' };
     } catch (e: any) {
       return { authorized: false, message: e.message };
     }
@@ -52,24 +99,33 @@ export class SimklService {
   /**
    * Tester la validité d'un token Simkl
    */
-  public static async testToken(accessToken: string): Promise<{ success: boolean; user?: any; message: string }> {
-    const clientId = this.getClientId();
+  public static async testToken(
+    accessToken: string,
+    clientIdOverride?: string
+  ): Promise<{ success: boolean; user?: any; message: string }> {
+    const clientId = this.getClientId(clientIdOverride);
 
     try {
-      const res = await fetch(`${SIMKL_API_BASE}/users/settings`, {
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${accessToken}`,
-          'simkl-api-key': clientId,
-        },
-      });
-
-      if (!res.ok) {
-        return { success: false, message: `Erreur Simkl: ${res.statusText}` };
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${accessToken.trim()}`,
+      };
+      if (clientId) {
+        headers['simkl-api-key'] = clientId;
       }
 
-      const data = await res.json() as any;
-      return { success: true, user: data.user, message: `Connecté à Simkl en tant que ${data.user?.name || 'utilisateur'}` };
+      const res = await fetch(`${SIMKL_API_BASE}/users/settings`, { headers });
+      if (!res.ok) {
+        const errText = await res.text().catch(() => '');
+        return { success: false, message: `Erreur Simkl (${res.status}): ${errText || res.statusText}` };
+      }
+
+      const data = (await res.json()) as any;
+      return {
+        success: true,
+        user: data.user,
+        message: `Connecté à Simkl en tant que ${data.user?.name || 'utilisateur'} !`,
+      };
     } catch (e: any) {
       return { success: false, message: e.message || 'Erreur lors du test Simkl' };
     }
@@ -78,23 +134,28 @@ export class SimklService {
   /**
    * Récupérer les films et séries déjà vus depuis Simkl
    */
-  public static async getWatchedFromSimkl(accessToken: string, type: 'movies' | 'shows' = 'movies'): Promise<any[]> {
-    const clientId = this.getClientId();
+  public static async getWatchedFromSimkl(
+    accessToken: string,
+    type: 'movies' | 'shows' = 'movies',
+    clientIdOverride?: string
+  ): Promise<any[]> {
+    const clientId = this.getClientId(clientIdOverride);
     if (!accessToken) return [];
 
     try {
-      const res = await fetch(`${SIMKL_API_BASE}/sync/all-items/${type}/completed`, {
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${accessToken}`,
-          'simkl-api-key': clientId,
-        },
-      });
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${accessToken}`,
+      };
+      if (clientId) {
+        headers['simkl-api-key'] = clientId;
+      }
 
+      const res = await fetch(`${SIMKL_API_BASE}/sync/all-items/${type}/completed`, { headers });
       if (!res.ok) return [];
-      const data = await res.json() as any;
+      const data = (await res.json()) as any;
       return data[type] || [];
-    } catch (e) {
+    } catch {
       return [];
     }
   }
@@ -108,8 +169,9 @@ export class SimklService {
     tmdbId?: number;
     title: string;
     year?: number;
+    clientIdOverride?: string;
   }): Promise<boolean> {
-    const clientId = this.getClientId();
+    const clientId = this.getClientId(params.clientIdOverride);
     if (!params.accessToken) return false;
 
     try {
@@ -125,18 +187,22 @@ export class SimklService {
         },
       ];
 
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${params.accessToken}`,
+      };
+      if (clientId) {
+        headers['simkl-api-key'] = clientId;
+      }
+
       const res = await fetch(`${SIMKL_API_BASE}/sync/history`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${params.accessToken}`,
-          'simkl-api-key': clientId,
-        },
+        headers,
         body: JSON.stringify(body),
       });
 
       return res.ok;
-    } catch (e) {
+    } catch {
       return false;
     }
   }
@@ -144,9 +210,13 @@ export class SimklService {
   /**
    * Synchroniser tous les éléments Simkl vers Frame pour un utilisateur
    */
-  public static async syncSimklToFrame(userId: number, accessToken: string): Promise<{ importedMovies: number; importedShows: number }> {
-    const movies = await this.getWatchedFromSimkl(accessToken, 'movies');
-    const shows = await this.getWatchedFromSimkl(accessToken, 'shows');
+  public static async syncSimklToFrame(
+    userId: number,
+    accessToken: string,
+    clientIdOverride?: string
+  ): Promise<{ importedMovies: number; importedShows: number }> {
+    const movies = await this.getWatchedFromSimkl(accessToken, 'movies', clientIdOverride);
+    const shows = await this.getWatchedFromSimkl(accessToken, 'shows', clientIdOverride);
 
     let importedMovies = 0;
     let importedShows = 0;
@@ -173,7 +243,7 @@ export class SimklService {
             m.last_watched_at || new Date().toISOString()
           );
           importedMovies++;
-        } catch (e) {
+        } catch {
           // Doublon ou erreur
         }
       }
@@ -194,7 +264,7 @@ export class SimklService {
             s.last_watched_at || new Date().toISOString()
           );
           importedShows++;
-        } catch (e) {
+        } catch {
           // Doublon ou erreur
         }
       }
