@@ -7,19 +7,124 @@ const router = Router();
 router.use(authenticateToken);
 
 // ==========================================
-// FLUX PIN CODE SIMKL (FACILE & SANS REDIRECT)
+// FLUX OAUTH 2.0 (RECOMMANDÉ - AUTH V2 BROWSER SIGN-IN)
+// ==========================================
+
+// 1. Initialiser le flux OAuth 2.0 avec PKCE
+router.post('/oauth/init', async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  try {
+    const userId = req.user!.id;
+    const { clientId, clientSecret, redirectUri } = req.body;
+
+    const userStmt = db.prepare('SELECT simkl_client_id, simkl_client_secret FROM users WHERE id = ?');
+    const userRow = userStmt.get(userId) as any;
+
+    const effectiveClientId = clientId?.trim() || userRow?.simkl_client_id || undefined;
+    const effectiveClientSecret = clientSecret?.trim() || userRow?.simkl_client_secret || undefined;
+    const effectiveRedirectUri = (redirectUri?.trim() || '').replace(/\/$/, '');
+
+    if (!effectiveRedirectUri) {
+      res.status(400).json({ error: 'URL de redirection requise' });
+      return;
+    }
+
+    const oauthInit = SimklService.initOAuth2({
+      clientId: effectiveClientId,
+      clientSecret: effectiveClientSecret,
+      redirectUri: effectiveRedirectUri,
+    });
+
+    // Sauvegarder clientId & clientSecret
+    if (effectiveClientId || effectiveClientSecret) {
+      db.prepare(
+        'UPDATE users SET simkl_client_id = COALESCE(?, simkl_client_id), simkl_client_secret = COALESCE(?, simkl_client_secret) WHERE id = ?'
+      ).run(effectiveClientId || null, effectiveClientSecret || null, userId);
+    }
+
+    res.json({
+      authUrl: oauthInit.authUrl,
+      state: oauthInit.state,
+      codeVerifier: oauthInit.codeVerifier,
+      clientId: effectiveClientId,
+      redirectUri: effectiveRedirectUri,
+    });
+  } catch (err: any) {
+    res.status(400).json({ error: err.message || 'Impossible d\'initialiser OAuth Simkl' });
+  }
+});
+
+// 2. Échanger le code OAuth 2.0 reçu contre un token d'accès
+router.post('/oauth/callback', async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  try {
+    const userId = req.user!.id;
+    const { code, codeVerifier, redirectUri, clientId, clientSecret } = req.body;
+
+    if (!code || !codeVerifier || !redirectUri) {
+      res.status(400).json({ error: 'Paramètres OAuth incomplets (code, codeVerifier et redirectUri requis).' });
+      return;
+    }
+
+    const userStmt = db.prepare('SELECT simkl_client_id, simkl_client_secret FROM users WHERE id = ?');
+    const userRow = userStmt.get(userId) as any;
+
+    const effectiveClientId = clientId?.trim() || userRow?.simkl_client_id || undefined;
+    const effectiveClientSecret = clientSecret?.trim() || userRow?.simkl_client_secret || undefined;
+
+    const tokenData = await SimklService.exchangeOAuth2Code({
+      code: code.trim(),
+      codeVerifier: codeVerifier.trim(),
+      redirectUri: redirectUri.trim(),
+      clientId: effectiveClientId,
+      clientSecret: effectiveClientSecret,
+    });
+
+    // Tester le token et récupérer le profil Simkl
+    const test = await SimklService.testToken(tokenData.access_token, effectiveClientId);
+
+    // Enregistrer en base de données
+    const stmt = db.prepare(`
+      UPDATE users 
+      SET simkl_access_token = ?, 
+          simkl_refresh_token = ?, 
+          simkl_user_id = ?, 
+          simkl_client_id = COALESCE(?, simkl_client_id), 
+          simkl_client_secret = COALESCE(?, simkl_client_secret)
+      WHERE id = ?
+    `);
+    stmt.run(
+      tokenData.access_token,
+      tokenData.refresh_token || null,
+      test.user?.id ? test.user.id.toString() : null,
+      effectiveClientId || null,
+      effectiveClientSecret || null,
+      userId
+    );
+
+    res.json({
+      success: true,
+      message: `Compte Simkl lié avec succès (${test.user?.name || 'Utilisateur'}) !`,
+      user: test.user,
+    });
+  } catch (err: any) {
+    res.status(400).json({ error: err.message || 'Erreur lors de la validation OAuth Simkl' });
+  }
+});
+
+// ==========================================
+// FLUX PIN CODE / DEVICE FLOW (V2 & V1)
 // ==========================================
 
 // 1. Obtenir un nouveau code PIN Simkl pour l'utilisateur
 router.get('/pin', async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   try {
     const userId = req.user!.id;
-    const userStmt = db.prepare('SELECT simkl_client_id FROM users WHERE id = ?');
+    const userStmt = db.prepare('SELECT simkl_client_id, simkl_client_secret FROM users WHERE id = ?');
     const userRow = userStmt.get(userId) as any;
 
     const clientIdParam = (req.query.clientId as string)?.trim() || userRow?.simkl_client_id || undefined;
+    const clientSecretParam = (req.query.clientSecret as string)?.trim() || userRow?.simkl_client_secret || undefined;
 
-    const pinData = await SimklService.getPin(clientIdParam);
+    const pinData = await SimklService.getPin(clientIdParam, clientSecretParam);
 
     // Mémoriser le Client ID pour cet utilisateur
     if (clientIdParam) {
@@ -36,24 +141,40 @@ router.get('/pin', async (req: AuthenticatedRequest, res: Response): Promise<voi
 router.post('/pin/check', async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   try {
     const userId = req.user!.id;
-    const { userCode, clientId } = req.body;
+    const { userCode, clientId, deviceCode, clientSecret } = req.body;
 
     if (!userCode) {
       res.status(400).json({ error: 'Code utilisateur requis' });
       return;
     }
 
-    const userStmt = db.prepare('SELECT simkl_client_id FROM users WHERE id = ?');
+    const userStmt = db.prepare('SELECT simkl_client_id, simkl_client_secret FROM users WHERE id = ?');
     const userRow = userStmt.get(userId) as any;
     const effectiveClientId = clientId?.trim() || userRow?.simkl_client_id || undefined;
+    const effectiveClientSecret = clientSecret?.trim() || userRow?.simkl_client_secret || undefined;
 
-    const check = await SimklService.checkPin(userCode, effectiveClientId);
+    const check = await SimklService.checkPin(userCode, effectiveClientId, deviceCode, effectiveClientSecret);
 
     if (check.authorized && check.access_token) {
       // Tester le token et enregistrer
       const test = await SimklService.testToken(check.access_token, effectiveClientId);
-      const stmt = db.prepare('UPDATE users SET simkl_access_token = ?, simkl_user_id = ?, simkl_client_id = ? WHERE id = ?');
-      stmt.run(check.access_token, test.user?.id ? test.user.id.toString() : null, effectiveClientId || null, userId);
+      const stmt = db.prepare(`
+        UPDATE users 
+        SET simkl_access_token = ?, 
+            simkl_refresh_token = ?, 
+            simkl_user_id = ?, 
+            simkl_client_id = COALESCE(?, simkl_client_id),
+            simkl_client_secret = COALESCE(?, simkl_client_secret)
+        WHERE id = ?
+      `);
+      stmt.run(
+        check.access_token,
+        check.refresh_token || null,
+        test.user?.id ? test.user.id.toString() : null,
+        effectiveClientId || null,
+        effectiveClientSecret || null,
+        userId
+      );
 
       res.json({
         authorized: true,
@@ -90,7 +211,7 @@ router.post('/link', async (req: AuthenticatedRequest, res: Response): Promise<v
     }
 
     const stmt = db.prepare('UPDATE users SET simkl_access_token = ?, simkl_user_id = ?, simkl_client_id = ? WHERE id = ?');
-    stmt.run(accessToken, test.user?.id ? test.user.id.toString() : null, clientId?.trim() || null, userId);
+    stmt.run(accessToken.trim(), test.user?.id ? test.user.id.toString() : null, clientId?.trim() || null, userId);
 
     res.json({ success: true, message: `Compte Simkl lié avec succès (${test.user?.name || 'Utilisateur'}) !` });
   } catch (err: any) {
@@ -102,7 +223,7 @@ router.post('/link', async (req: AuthenticatedRequest, res: Response): Promise<v
 router.post('/unlink', (req: AuthenticatedRequest, res: Response) => {
   try {
     const userId = req.user!.id;
-    const stmt = db.prepare('UPDATE users SET simkl_access_token = NULL, simkl_user_id = NULL WHERE id = ?');
+    const stmt = db.prepare('UPDATE users SET simkl_access_token = NULL, simkl_refresh_token = NULL, simkl_user_id = NULL WHERE id = ?');
     stmt.run(userId);
     res.json({ success: true, message: 'Compte Simkl déconnecté.' });
   } catch (err: any) {

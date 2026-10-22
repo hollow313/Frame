@@ -1,4 +1,4 @@
-import { MediaItem, WatchedItem, WatchlistItem, RecommendationResponse, UserStats, User, SeerRequest, SeerMediaStatus, ArrStatus } from '../types';
+import { MediaItem, TvSeason, WatchedItem, WatchlistItem, RecommendationResponse, UserStats, User, SeerRequest, SeerMediaStatus, ArrStatus } from '../types';
 
 const API_BASE = '/api';
 
@@ -81,7 +81,9 @@ export const api = {
     request<{ results: MediaItem[]; page: number; total_pages: number }>(`/tmdb/search?q=${encodeURIComponent(query)}&page=${page}`),
   getMediaDetails: (mediaType: 'movie' | 'tv', id: number) =>
     request<MediaItem>(`/tmdb/${mediaType}/${id}`),
-  getUpcomingMedia: (type: 'all' | 'movie' | 'tv' = 'all', page: number = 1) =>
+  getTvSeason: (tvId: number, seasonNumber: number) =>
+    request<TvSeason>(`/tmdb/tv/${tvId}/season/${seasonNumber}`),
+  getUpcomingMedia: (type: 'all' | 'movie' | 'tv' | 'anime' = 'all', page: number = 1) =>
     request<{ results: MediaItem[]; total_pages: number }>(`/tmdb/upcoming?type=${type}&page=${page}`),
   discoverByGenre: (type: 'movie' | 'tv', genreId: number, page: number = 1) =>
     request<{ results: MediaItem[]; total_pages: number }>(`/tmdb/discover?type=${type}&genreId=${genreId}&page=${page}`),
@@ -164,14 +166,24 @@ export const api = {
   checkRadarrMovie: (tmdbId: number) => request<ArrStatus>(`/sonarr/check/movie/${tmdbId}`),
 
   // ==================== SIMKL ====================
-  getSimklPin: (clientId?: string) =>
-    request<{ user_code: string; verification_url: string; expires_in: number; client_id?: string }>(
-      `/simkl/pin${clientId ? `?clientId=${encodeURIComponent(clientId)}` : ''}`
+  initSimklOAuth: (payload: { clientId?: string; clientSecret?: string; redirectUri: string }) =>
+    request<{ authUrl: string; state: string; codeVerifier: string; clientId?: string; redirectUri: string }>('/simkl/oauth/init', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+  callbackSimklOAuth: (payload: { code: string; codeVerifier: string; redirectUri: string; clientId?: string; clientSecret?: string }) =>
+    request<{ success: boolean; message: string; user?: any }>('/simkl/oauth/callback', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+  getSimklPin: (clientId?: string, clientSecret?: string) =>
+    request<{ user_code: string; verification_url: string; expires_in: number; client_id?: string; device_code?: string; isV2?: boolean }>(
+      `/simkl/pin?${clientId ? `clientId=${encodeURIComponent(clientId)}&` : ''}${clientSecret ? `clientSecret=${encodeURIComponent(clientSecret)}` : ''}`
     ),
-  checkSimklPin: (userCode: string, clientId?: string) =>
+  checkSimklPin: (userCode: string, clientId?: string, deviceCode?: string, clientSecret?: string) =>
     request<{ authorized: boolean; message?: string }>('/simkl/pin/check', {
       method: 'POST',
-      body: JSON.stringify({ userCode, clientId }),
+      body: JSON.stringify({ userCode, clientId, deviceCode, clientSecret }),
     }),
   linkSimkl: (payload: { accessToken: string; clientId?: string }) =>
     request<{ success: boolean; message: string }>('/simkl/link', {

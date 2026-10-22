@@ -285,14 +285,47 @@ export class TMDBService {
   }
 
   /**
+   * Obtenir le détail des épisodes d'une saison de série TV
+   */
+  public static async getTvSeason(tvId: number, seasonNumber: number): Promise<any> {
+    const lang = this.getLanguage();
+    const data = await this.request<any>(`/tv/${tvId}/season/${seasonNumber}`, { language: lang });
+
+    const episodes = (data.episodes || []).map((ep: any) => ({
+      id: ep.id,
+      episode_number: ep.episode_number,
+      season_number: ep.season_number,
+      name: ep.name || `Épisode ${ep.episode_number}`,
+      overview: ep.overview || '',
+      air_date: ep.air_date,
+      runtime: ep.runtime,
+      vote_average: ep.vote_average ? Math.round(ep.vote_average * 10) / 10 : null,
+      still_path: ep.still_path ? `https://image.tmdb.org/t/p/w300${ep.still_path}` : null,
+    }));
+
+    return {
+      id: data.id,
+      season_number: data.season_number,
+      name: data.name,
+      overview: data.overview || '',
+      air_date: data.air_date,
+      poster_path: data.poster_path ? `https://image.tmdb.org/t/p/w300${data.poster_path}` : null,
+      episodes,
+    };
+  }
+
+  /**
    * Obtenir les prochaines sorties (style calendrier Sonarr/Radarr)
    */
   public static async getUpcomingReleases(
-    type: 'all' | 'movie' | 'tv' = 'all',
+    type: 'all' | 'movie' | 'tv' | 'anime' = 'all',
     page: number = 1
   ): Promise<{ results: TMDBMediaItem[]; total_pages: number }> {
     const results: TMDBMediaItem[] = [];
+    const todayStr = new Date().toISOString().split('T')[0];
+    const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
 
+    // 1. FILMS À VENIR
     if (type === 'all' || type === 'movie') {
       try {
         const moviesData = await this.request<{ results: any[] }>('/movie/upcoming', {
@@ -306,23 +339,90 @@ export class TMDBService {
       } catch {}
     }
 
+    // 2. SÉRIES TV ACTUELLEMENT EN DIFFUSION OU À VENIR
     if (type === 'all' || type === 'tv') {
       try {
+        // Séries diffusant des épisodes en ce moment (on the air)
         const tvData = await this.request<{ results: any[] }>('/tv/on_the_air', {
           page: page.toString(),
         });
-        const normalizedTv = (tvData.results || []).map((t) =>
+        const normalizedTv = (tvData.results || []).map((t) => {
+          const item = this.normalizeMedia({ ...t, media_type: 'tv' });
+          // Si la série a débuté avant aujourd'hui, elle diffuse des épisodes cette semaine
+          if (!item.release_date || item.release_date < todayStr) {
+            item.release_date = todayStr;
+          }
+          return item;
+        });
+        results.push(...normalizedTv);
+      } catch {}
+
+      try {
+        // Nouvelles séries démarrant prochainement
+        const newTvData = await this.request<{ results: any[] }>('/discover/tv', {
+          'first_air_date.gte': todayStr,
+          sort_by: 'popularity.desc',
+          page: page.toString(),
+        });
+        const normalizedNewTv = (newTvData.results || []).map((t) =>
           this.normalizeMedia({ ...t, media_type: 'tv' })
         );
-        results.push(...normalizedTv);
+        results.push(...normalizedNewTv);
       } catch {}
     }
 
+    // 3. MANGAS & ANIMÉS (En cours de diffusion ou à venir)
+    if (type === 'all' || type === 'anime') {
+      try {
+        const animeTv = await this.request<{ results: any[] }>('/discover/tv', {
+          with_genres: '16',
+          with_original_language: 'ja',
+          without_genres: '10762,10751',
+          'air_date.gte': sevenDaysAgo,
+          sort_by: 'popularity.desc',
+          page: page.toString(),
+          'vote_count.gte': '10',
+        });
+        const normalizedAnimeTv = (animeTv.results || []).map((t) => {
+          const item = this.normalizeMedia({ ...t, media_type: 'tv' });
+          if (!item.release_date || item.release_date < todayStr) {
+            item.release_date = todayStr;
+          }
+          return item;
+        });
+        results.push(...normalizedAnimeTv);
+      } catch {}
+
+      try {
+        const animeMovies = await this.request<{ results: any[] }>('/discover/movie', {
+          with_genres: '16',
+          with_original_language: 'ja',
+          without_genres: '10751',
+          'primary_release_date.gte': sevenDaysAgo,
+          sort_by: 'popularity.desc',
+          page: page.toString(),
+          'vote_count.gte': '5',
+        });
+        const normalizedAnimeMovies = (animeMovies.results || []).map((m) =>
+          this.normalizeMedia({ ...m, media_type: 'movie' })
+        );
+        results.push(...normalizedAnimeMovies);
+      } catch {}
+    }
+
+    // Dédoublonner par media_type + id
+    const seen = new Set<string>();
+    const uniqueResults = results.filter((item) => {
+      const key = `${item.media_type}-${item.id}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+
     // Filtrer pour ne garder que les sorties >= à il y a 7 jours
-    const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
-    const upcomingFiltered = results.filter((item) => {
+    const upcomingFiltered = uniqueResults.filter((item) => {
       const d = item.release_date;
-      return d && d >= sevenDaysAgo;
+      return Boolean(d && d >= sevenDaysAgo);
     });
 
     // Trier chronologiquement (de la sortie la plus proche à la plus lointaine)

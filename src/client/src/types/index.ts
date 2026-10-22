@@ -31,15 +31,39 @@ export interface MediaItem {
   status?: string;
   number_of_seasons?: number;
   number_of_episodes?: number;
+  seasons?: { id: number; name: string; season_number: number; episode_count: number; air_date?: string; poster_path?: string | null }[];
   trailer_key?: string | null;
   cast?: { id: number; name: string; character: string; profile_path: string | null }[];
   director?: string | null;
   streaming_providers?: StreamingProvider[];
   buy_providers?: StreamingProvider[];
   isWatched?: boolean;
+  watched_at?: string | null;
   userRating?: number | null;
   inWatchlist?: boolean;
   watchlistStatus?: string | null;
+}
+
+export interface TvEpisode {
+  id: number;
+  episode_number: number;
+  season_number: number;
+  name: string;
+  overview: string;
+  air_date?: string;
+  runtime?: number | null;
+  vote_average?: number | null;
+  still_path?: string | null;
+}
+
+export interface TvSeason {
+  id: number;
+  season_number: number;
+  name: string;
+  overview: string;
+  air_date?: string;
+  poster_path?: string | null;
+  episodes: TvEpisode[];
 }
 
 export interface HeroProposalItem extends MediaItem {
@@ -108,6 +132,7 @@ export interface User {
   authProvider?: 'local' | 'ldap' | 'sso';
   simklConnected?: boolean;
   simklClientId?: string;
+  simklClientSecret?: string;
   jellyfinConnected?: boolean;
   jellyfinServerUrl?: string;
   prefIncludeMovies?: boolean;

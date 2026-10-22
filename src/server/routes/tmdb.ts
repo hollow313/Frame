@@ -32,11 +32,11 @@ function annotateWithUserData(items: any[], userId?: number) {
   if (!userId || !items || items.length === 0) return items;
 
   try {
-    const watchedStmt = db.prepare('SELECT tmdb_id, media_type, rating FROM watched_items WHERE user_id = ?');
+    const watchedStmt = db.prepare('SELECT tmdb_id, media_type, rating, watched_at FROM watched_items WHERE user_id = ?');
     const watched = watchedStmt.all(userId) as any[];
-    const watchedMap = new Map<string, { rating: number | null }>();
+    const watchedMap = new Map<string, { rating: number | null; watched_at: string | null }>();
     for (const w of watched) {
-      watchedMap.set(`${w.media_type}-${w.tmdb_id}`, { rating: w.rating });
+      watchedMap.set(`${w.media_type}-${w.tmdb_id}`, { rating: w.rating, watched_at: w.watched_at });
     }
 
     const watchlistStmt = db.prepare('SELECT tmdb_id, media_type, status FROM watchlist WHERE user_id = ?');
@@ -54,6 +54,7 @@ function annotateWithUserData(items: any[], userId?: number) {
       return {
         ...item,
         isWatched: Boolean(watchedInfo),
+        watched_at: watchedInfo ? watchedInfo.watched_at : null,
         userRating: watchedInfo ? watchedInfo.rating : null,
         inWatchlist: Boolean(watchlistStatus),
         watchlistStatus: watchlistStatus || null,
@@ -117,11 +118,29 @@ router.get('/search', async (req: AuthenticatedRequest, res: Response) => {
 // Prochaines sorties (Calendrier style Sonarr)
 router.get('/upcoming', async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const type = (req.query.type as 'all' | 'movie' | 'tv') || 'all';
+    const type = (req.query.type as 'all' | 'movie' | 'tv' | 'anime') || 'all';
     const page = parseInt(req.query.page as string, 10) || 1;
     const data = await TMDBService.getUpcomingReleases(type, page);
     data.results = annotateWithUserData(data.results, req.user?.id);
     res.json(data);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Épisodes d'une saison de série TV
+router.get('/tv/:id/season/:seasonNumber', async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    const seasonNumber = parseInt(req.params.seasonNumber, 10);
+
+    if (isNaN(id) || isNaN(seasonNumber)) {
+      res.status(400).json({ error: 'ID ou numéro de saison invalide' });
+      return;
+    }
+
+    const season = await TMDBService.getTvSeason(id, seasonNumber);
+    res.json(season);
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }

@@ -103,6 +103,8 @@ export function initDatabase() {
     'ALTER TABLE users ADD COLUMN jellyfin_access_token TEXT',
     'ALTER TABLE users ADD COLUMN jellyfin_server_url TEXT',
     'ALTER TABLE users ADD COLUMN simkl_client_id TEXT',
+    'ALTER TABLE users ADD COLUMN simkl_client_secret TEXT',
+    'ALTER TABLE users ADD COLUMN simkl_refresh_token TEXT',
     'ALTER TABLE users ADD COLUMN pref_include_movies INTEGER DEFAULT 1',
     'ALTER TABLE users ADD COLUMN pref_include_tv INTEGER DEFAULT 1',
     'ALTER TABLE users ADD COLUMN pref_include_anime INTEGER DEFAULT 0',

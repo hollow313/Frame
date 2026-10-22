@@ -27,7 +27,7 @@ export const Calendar: React.FC<CalendarProps> = ({
   onToggleWatchlist,
 }) => {
   const { user } = useAuth();
-  const [filterType, setFilterType] = useState<'all' | 'movie' | 'tv' | 'watchlist'>('all');
+  const [filterType, setFilterType] = useState<'all' | 'movie' | 'tv' | 'anime' | 'watchlist'>('all');
   const [items, setItems] = useState<MediaItem[]>([]);
   const [watchlistItems, setWatchlistItems] = useState<MediaItem[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
@@ -64,8 +64,7 @@ export const Calendar: React.FC<CalendarProps> = ({
           setItems([]);
         }
       } else {
-        const typeParam = filterType === 'watchlist' ? 'all' : filterType;
-        const res = await api.getUpcomingMedia(typeParam, 1);
+        const res = await api.getUpcomingMedia(filterType, 1);
         setItems(res.results || []);
       }
     } catch (err) {
@@ -111,9 +110,13 @@ export const Calendar: React.FC<CalendarProps> = ({
 
   const getCountdownText = (releaseDate?: string) => {
     if (!releaseDate) return null;
-    const target = new Date(releaseDate).getTime();
-    const diffDays = Math.ceil((target - Date.now()) / (1000 * 60 * 60 * 24));
-    if (diffDays <= 0) return 'Aujourd\'hui !';
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const target = new Date(releaseDate);
+    target.setHours(0, 0, 0, 0);
+    const diffDays = Math.round((target.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+    if (diffDays === 0) return "Aujourd'hui !";
+    if (diffDays < 0) return 'Cette semaine';
     if (diffDays === 1) return 'Demain';
     return `Dans ${diffDays} jours`;
   };
@@ -177,6 +180,17 @@ export const Calendar: React.FC<CalendarProps> = ({
           <span>Séries</span>
         </button>
         <button
+          onClick={() => setFilterType('anime')}
+          className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all ${
+            filterType === 'anime'
+              ? 'bg-primary-600 text-white shadow'
+              : 'text-slate-400 hover:text-white hover:bg-dark-850'
+          }`}
+        >
+          <Layers className="w-3.5 h-3.5" />
+          <span>Mangas & Animés</span>
+        </button>
+        <button
           onClick={() => setFilterType('watchlist')}
           className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all ${
             filterType === 'watchlist'
@@ -210,6 +224,7 @@ export const Calendar: React.FC<CalendarProps> = ({
                   const releaseDate = item.release_date ? new Date(item.release_date) : null;
                   const countdown = getCountdownText(item.release_date);
                   const isMovie = item.media_type === 'movie';
+                  const isAnime = item.genre_ids?.includes(16) || item.genres?.some((g) => g.id === 16);
 
                   return (
                     <div
@@ -243,8 +258,10 @@ export const Calendar: React.FC<CalendarProps> = ({
                       {/* Info */}
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-2 mb-0.5">
-                          <span className="text-[10px] uppercase font-bold px-1.5 py-0.2 rounded bg-dark-800 text-slate-400">
-                            {isMovie ? 'Film' : 'Série'}
+                          <span className={`text-[10px] uppercase font-bold px-1.5 py-0.2 rounded ${
+                            isAnime ? 'bg-amber-500/20 text-amber-300' : 'bg-dark-800 text-slate-400'
+                          }`}>
+                            {isAnime ? 'Animé' : isMovie ? 'Film' : 'Série'}
                           </span>
                           {countdown && (
                             <span className="text-[10px] font-bold text-amber-400 bg-amber-500/10 px-1.5 py-0.2 rounded border border-amber-500/20">

@@ -119,28 +119,29 @@ Accédez ensuite à l'application depuis votre navigateur :
 
 ## 🛠️ Configuration & Intégrations
 
-### 1. Synchronisation Simkl (Tutoriel Complet & Connexion Facile)
+### 1. Synchronisation Simkl (Tutoriel Complet OAuth 2.0 Auth V2 & PIN)
 
 Pour connecter votre compte Simkl sans tracas et importer vos listes :
 
-#### Étape 1 : Obtenir votre Client ID Simkl (en 1 minute chrono)
+#### Étape 1 : Créer votre application Simkl (en 1 minute chrono)
 1. Rendez-vous sur la page développeur Simkl : [https://simkl.com/settings/developer/new](https://simkl.com/settings/developer/new)
 2. Remplissez le formulaire :
    - **App Name** : `Frame`
-   - **Redirect URLs** : `https://simkl.com` *(Simkl exige une URL valide dans ce champ pour enregistrer l'application, même si elle n'est pas utilisée pour le flux PIN)*
+   - **Type d'application** : Choisissez **`Browser sign-in + server callback`** (Auth V2)
+   - **Redirect URLs** : Renseignez l'adresse de votre serveur Frame suivie de `/settings` (ex: `http://<IP_DU_SERVEUR>:30018/settings`). Vous pouvez cliquer sur le bouton **« Copier l'URL »** directement dans Frame pour obtenir l'adresse exacte.
 3. Cliquez sur le bouton **« Save App »**.
-4. Copiez la valeur du **Client ID** (chaîne de caractères hexadécimale).
+4. Simkl affiche votre **Client ID** et votre **Client Secret**. Conservez-les précieusement.
 
-#### Étape 2 : Lier votre compte dans Frame
+#### Étape 2 : Lier votre compte dans Frame (Connexion 1-clic)
 1. Dans Frame, allez dans **Paramètres** > onglet **Mon Profil, Simkl & Jellyfin**.
-2. Dans la section **Connexion Simkl**, collez votre **Client ID** dans le champ prévu à cet effet.
-3. Cliquez sur **« Générer mon code PIN Simkl »**.
-4. Cliquez sur **« 1. Valider sur Simkl »** : la page Simkl s'ouvre avec votre code PIN pré-rempli.
-5. Cliquez sur **Approve** sur Simkl pour autoriser la connexion.
-6. Revenez sur l'onglet Frame et cliquez sur **« 2. J'ai validé le code sur Simkl ! »**.
-7. Cliquez sur **« Synchroniser mes vues maintenant »** : tous vos films et séries visionnés sont instantanément importés !
+2. Dans la section **Connexion Simkl**, collez votre **Client ID** et votre **Client Secret**.
+3. Cliquez sur le bouton violet **« Se connecter avec Simkl (OAuth 2.0) »**.
+4. La page de consentement Simkl s'ouvre : cliquez sur **Autoriser / Approve**.
+5. Vous êtes automatiquement redirigé vers Frame et connecté avec succès !
+6. Cliquez sur **« Synchroniser mes vues maintenant »** : tous vos films et séries visionnés sont instantanément importés.
 
-*(Option alternative : si vous possédez déjà un Access Token Simkl direct, ouvrez la section accordéon « Ou lier directement avec un Access Token Simkl » et collez-le).*
+> 💡 **Important** : Le Client Secret (qui commence par `simkl_cs_`) n'est pas un jeton d'accès utilisateur. Ne le collez pas dans le champ Jeton d'accès direct, mais bien dans le champ Client Secret du formulaire de connexion OAuth.
+> 📺 **Mode PIN alternatif** : Pour les appareils sans navigateur ou Smart TV, vous pouvez également utiliser l'option *« Connexion par code PIN »* pour valider un code court à 8 caractères sur `simkl.com/pin`.
 
 ---
 
@@ -188,8 +189,27 @@ Pour suivre exactement ce que chaque utilisateur regarde en temps réel :
      2. Cliquez sur le bouton **+**, nommez la clé `Frame`, et copiez la clé générée.
      3. Dans Frame, choisissez l'onglet **Clé API** et collez votre clé. Cette méthode est infaillible et ne dépend pas des restrictions de mot de passe.
 3. Le bandeau d'accueil affiche automatiquement la lecture en direct avec pourcentage de progression, et le bouton **« Synchroniser mes vues Jellyfin »** importe votre historique exact.
-4. **Lancement direct dans l'application Jellyfin pour PC** : Lorsqu'une œuvre est détectée sur votre serveur Jellyfin, le bouton **« Voir sur Jellyfin »** utilise le protocole natif `jellyfin://` pour lancer directement votre application de bureau Jellyfin installée sur votre PC (sans ouvrir de page web dans le navigateur).
-5. **Blocage automatique des demandes Seer inutiles** : Dès qu'un film ou une série est déjà présent sur votre serveur (disponible dans Jellyfin, téléchargé dans Sonarr/Radarr ou validé dans Seer), le bouton « Demander sur Seer » est automatiquement masqué et remplacé par le badge *« Présent sur le serveur »*.
+4. **Accès direct Jellyfin** : Lorsqu'une œuvre est détectée sur votre serveur, le bouton **« Voir sur Jellyfin »** ouvre directement la fiche du média sur votre Jellyfin pour lancer la lecture en un clic.
+5. **Blocage automatique des demandes Seer inutiles** : Dès qu'un film ou une série est déjà présent sur votre serveur (disponible dans Jellyfin, téléchargé dans Sonarr/Radarr ou validé dans Seer), le bouton « Demander sur Seer » est automatiquement masqué et remplacé par le badge vert *« Présent sur le serveur »*. Les options superflues (comme la case 4K) ont été retirées pour une interface épurée.
+
+---
+
+### 6. Fiches Médias Enrichies & Guide des Épisodes
+
+Chaque fiche de film ou série propose désormais des informations complètes :
+- **Pour les séries TV** : Sélecteur de saisons avec la liste détaillée des épisodes, numéros, titres en français, synopsis de chaque épisode, dates de diffusion et durées.
+- **Date de sortie complète** et compte à rebours précis.
+- **Suivi des visionnages** : Si l'œuvre a déjà été vue, la date exacte du visionnage (*« Vu le JJ/MM/AAAA »*) et votre note personnelle s'affichent instantanément.
+
+---
+
+### 7. Calendrier des Prochaines Sorties (Films, Séries & Mangas)
+
+Le calendrier répertorie toutes les sorties à venir dans une vue chronologique (cette semaine, semaine prochaine, ce mois-ci, watchlist) :
+- **Films** : Sorties en salle et nouveautés cinéma.
+- **Séries TV** : Épisodes de séries actuellement en cours de diffusion (*on the air*) et nouvelles séries à venir.
+- **Mangas & Animés** : Nouveaux épisodes et films d'animation japonaise à venir (avec exclusion des dessins animés pour enfants).
+- **Ma Watchlist** : Vos propres œuvres enregistrées ayant une date de diffusion future.
 
 ---
 

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { Navbar } from './components/Navbar';
 import { MediaModal } from './components/MediaModal';
@@ -17,7 +17,7 @@ import { MediaItem } from './types';
 import { api } from './services/api';
 
 const AppContent: React.FC = () => {
-  const { user, isAdmin } = useAuth();
+  const { user, isAdmin, refreshUser } = useAuth();
   const [currentTab, setCurrentTab] = useState<string>('dashboard');
 
   // Modals state
@@ -30,6 +30,41 @@ const AppContent: React.FC = () => {
     setToastMessage(msg);
     setTimeout(() => setToastMessage(null), 3000);
   };
+
+  useEffect(() => {
+    const urlParams = new URLSearchParams(window.location.search);
+    const code = urlParams.get('code');
+    if (code) {
+      const verifier = localStorage.getItem('simkl_oauth_verifier');
+      const redirectUri = localStorage.getItem('simkl_oauth_redirect_uri') || `${window.location.origin}/settings`;
+      const savedClientId = localStorage.getItem('simkl_oauth_client_id') || undefined;
+      const savedClientSecret = localStorage.getItem('simkl_oauth_client_secret') || undefined;
+
+      if (verifier) {
+        api.callbackSimklOAuth({
+          code,
+          codeVerifier: verifier,
+          redirectUri,
+          clientId: savedClientId,
+          clientSecret: savedClientSecret,
+        })
+          .then((res) => {
+            showToast(res.message || 'Compte Simkl lié avec succès !');
+            localStorage.removeItem('simkl_oauth_verifier');
+            localStorage.removeItem('simkl_oauth_state');
+            localStorage.removeItem('simkl_oauth_redirect_uri');
+            localStorage.removeItem('simkl_oauth_client_id');
+            localStorage.removeItem('simkl_oauth_client_secret');
+            window.history.replaceState({}, document.title, window.location.pathname);
+            refreshUser();
+            setCurrentTab('settings');
+          })
+          .catch((err) => {
+            showToast('Erreur Simkl: ' + (err.message || 'Échec'));
+          });
+      }
+    }
+  }, []);
 
   const handleSelectMedia = (item: MediaItem) => {
     setSelectedMedia({ type: item.media_type, id: item.id });

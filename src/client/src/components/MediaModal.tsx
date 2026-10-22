@@ -12,9 +12,11 @@ import {
   Clock, 
   Calendar,
   CheckCircle2,
-  HardDrive
+  HardDrive,
+  Layers,
+  ChevronDown
 } from 'lucide-react';
-import { MediaItem } from '../types';
+import { MediaItem, TvEpisode } from '../types';
 import { api } from '../services/api';
 
 interface MediaModalProps {
@@ -38,10 +40,15 @@ export const MediaModal: React.FC<MediaModalProps> = ({
   const [loading, setLoading] = useState<boolean>(true);
   const [seerStatus, setSeerStatus] = useState<any>(null);
   const [arrStatus, setArrStatus] = useState<any>(null);
-  const [jellyfinItem, setJellyfinItem] = useState<{ inJellyfin: boolean; itemId?: string; name?: string } | null>(null);
+  const [jellyfinItem, setJellyfinItem] = useState<{ inJellyfin: boolean; itemId?: string; name?: string; serverUrl?: string } | null>(null);
   const [requestingSeer, setRequestingSeer] = useState<boolean>(false);
   const [cancellingSeer, setCancellingSeer] = useState<boolean>(false);
   const [showTrailer, setShowTrailer] = useState<boolean>(false);
+
+  // Séries TV : gestion des saisons et épisodes
+  const [selectedSeason, setSelectedSeason] = useState<number>(1);
+  const [seasonEpisodes, setSeasonEpisodes] = useState<TvEpisode[]>([]);
+  const [loadingSeason, setLoadingSeason] = useState<boolean>(false);
 
   useEffect(() => {
     if (isOpen && id) {
@@ -49,14 +56,35 @@ export const MediaModal: React.FC<MediaModalProps> = ({
     } else {
       setItem(null);
       setShowTrailer(false);
+      setSeasonEpisodes([]);
     }
   }, [isOpen, id, mediaType]);
+
+  const loadSeasonEpisodes = async (tvId: number, seasonNumber: number) => {
+    setLoadingSeason(true);
+    try {
+      const res = await api.getTvSeason(tvId, seasonNumber);
+      setSeasonEpisodes(res.episodes || []);
+    } catch (e) {
+      console.error('Erreur chargement épisodes saison', e);
+      setSeasonEpisodes([]);
+    } finally {
+      setLoadingSeason(false);
+    }
+  };
 
   const loadDetails = async () => {
     setLoading(true);
     try {
       const details = await api.getMediaDetails(mediaType, id);
       setItem(details);
+
+      // Si c'est une série, charger automatiquement la première saison valide
+      if (mediaType === 'tv') {
+        const firstSeason = details.seasons?.find((s) => s.season_number > 0)?.season_number || 1;
+        setSelectedSeason(firstSeason);
+        loadSeasonEpisodes(details.id, firstSeason);
+      }
 
       // Charger le statut Seer en parallèle
       api.checkSeerStatus(mediaType, id)
@@ -85,6 +113,13 @@ export const MediaModal: React.FC<MediaModalProps> = ({
     }
   };
 
+  const handleSelectSeason = (seasonNum: number) => {
+    setSelectedSeason(seasonNum);
+    if (item) {
+      loadSeasonEpisodes(item.id, seasonNum);
+    }
+  };
+
   const handleRequestSeer = async () => {
     if (!item) return;
     setRequestingSeer(true);
@@ -95,7 +130,6 @@ export const MediaModal: React.FC<MediaModalProps> = ({
         is4k: false,
         seasons: 'all',
       });
-      // Rafraîchir le statut Seer
       const updated = await api.checkSeerStatus(mediaType, item.id);
       setSeerStatus(updated);
       alert('Demande envoyée avec succès à Seer !');
@@ -123,6 +157,14 @@ export const MediaModal: React.FC<MediaModalProps> = ({
   };
 
   if (!isOpen) return null;
+
+  // Déterminer si le média est déjà disponible sur le serveur
+  const isAvailableOnServer = Boolean(
+    jellyfinItem?.inJellyfin ||
+    arrStatus?.inLibrary ||
+    seerStatus?.status === 4 ||
+    seerStatus?.status === 5
+  );
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 md:p-6 bg-dark-950/85 backdrop-blur-md overflow-y-auto">
@@ -203,14 +245,14 @@ export const MediaModal: React.FC<MediaModalProps> = ({
                       {item.media_type === 'movie' ? 'Film' : 'Série TV'}
                     </span>
                     {item.release_date && (
-                      <span className="flex items-center gap-1 text-xs text-slate-400">
-                        <Calendar className="w-3.5 h-3.5" />
-                        {new Date(item.release_date).getFullYear()}
+                      <span className="flex items-center gap-1 text-xs text-slate-300 font-medium">
+                        <Calendar className="w-3.5 h-3.5 text-primary-400" />
+                        <span>{new Date(item.release_date).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' })}</span>
                       </span>
                     )}
                     {item.release_date && new Date(item.release_date).getTime() > Date.now() && (
                       <span className="flex items-center gap-1 text-xs font-bold px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30">
-                        <span>⏳ Sortie le {new Date(item.release_date).toLocaleDateString('fr-FR')} (dans {Math.ceil((new Date(item.release_date).getTime() - Date.now()) / (1000 * 60 * 60 * 24))} jours)</span>
+                        <span>⏳ Sortie dans {Math.ceil((new Date(item.release_date).getTime() - Date.now()) / (1000 * 60 * 60 * 24))} jours</span>
                       </span>
                     )}
                     {item.runtime && (
@@ -234,6 +276,19 @@ export const MediaModal: React.FC<MediaModalProps> = ({
                     <p className="text-xs text-slate-400 italic">
                       Titre original : {item.original_title}
                     </p>
+                  )}
+
+                  {/* Statut VU avec date exacte */}
+                  {item.isWatched && (
+                    <div className="inline-flex items-center gap-2 px-3 py-1 rounded-xl bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 text-xs font-semibold">
+                      <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                      <span>
+                        {item.watched_at
+                          ? `Vu le ${new Date(item.watched_at).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' })}`
+                          : 'Déjà vu'}
+                        {item.userRating ? ` • Votre note : ${item.userRating}/10` : ''}
+                      </span>
+                    </div>
                   )}
 
                   {item.tagline && (
@@ -307,22 +362,24 @@ export const MediaModal: React.FC<MediaModalProps> = ({
                   </button>
                 </div>
 
-                {/* Right: Server / Seer Request Button / Jellyfin Direct App */}
+                {/* Right: Server / Seer Request Button / Jellyfin Direct */}
                 <div className="flex flex-wrap items-center gap-2">
-                  {/* CAS 1: Présent sur le serveur (Sonarr/Radarr/Jellyfin/Seer Disponible) */}
-                  {Boolean((arrStatus?.inLibrary && arrStatus?.downloaded) || seerStatus?.status === 5 || jellyfinItem?.inJellyfin) ? (
+                  {/* CAS 1: Présent sur le serveur (Jellyfin, Sonarr/Radarr, ou Seer disponible) */}
+                  {isAvailableOnServer ? (
                     <div className="flex items-center gap-2">
                       <span className="flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-xl bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
                         <CheckCircle2 className="w-4 h-4" />
                         Présent sur le serveur
                       </span>
 
-                      {/* Bouton pour ouvrir l'application Jellyfin sur PC directement (protocole jellyfin://) */}
+                      {/* Bouton Voir sur Jellyfin */}
                       {jellyfinItem?.inJellyfin && jellyfinItem?.itemId && (
                         <a
-                          href={`jellyfin://item?id=${jellyfinItem.itemId}`}
+                          href={jellyfinItem.serverUrl ? `${jellyfinItem.serverUrl}/web/index.html#!/details?id=${jellyfinItem.itemId}` : `jellyfin://item?id=${jellyfinItem.itemId}`}
+                          target="_blank"
+                          rel="noreferrer"
                           className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold shadow-glow transition-all hover:scale-105"
-                          title="Lancer dans l'application Jellyfin pour PC (jellyfin://)"
+                          title="Accéder directement au média sur Jellyfin"
                         >
                           <Play className="w-3.5 h-3.5 fill-white" />
                           <span>Voir sur Jellyfin</span>
@@ -380,7 +437,7 @@ export const MediaModal: React.FC<MediaModalProps> = ({
                 <div className="p-3.5 rounded-xl bg-dark-800/60 border border-emerald-500/20 flex items-center justify-between text-xs">
                   <div className="flex items-center gap-2 text-emerald-400">
                     <Server className="w-4 h-4" />
-                    <span className="font-semibold">Présent dans votre médiathèque locale ({arrStatus.title})</span>
+                    <span className="font-semibold">Présent dans votre médiathèque ({arrStatus.title})</span>
                   </div>
                   <div className="text-slate-400">
                     {arrStatus.downloaded ? 'Téléchargement complet' : 'En surveillance'}
@@ -401,9 +458,108 @@ export const MediaModal: React.FC<MediaModalProps> = ({
                 </p>
               </div>
 
+              {/* SECTION ÉPISODES POUR LES SÉRIES TV */}
+              {item.media_type === 'tv' && item.seasons && item.seasons.length > 0 && (
+                <div className="space-y-4 pt-2 border-t border-white/5">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                    <div className="flex items-center gap-2">
+                      <Layers className="w-4 h-4 text-primary-400" />
+                      <h3 className="text-sm font-bold uppercase tracking-wider text-white">
+                        Guide des Épisodes & Saisons
+                      </h3>
+                    </div>
+
+                    {/* Sélecteur de saisons */}
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      {item.seasons
+                        .filter((s) => s.season_number > 0)
+                        .map((s) => (
+                          <button
+                            key={s.id}
+                            onClick={() => handleSelectSeason(s.season_number)}
+                            className={`px-3 py-1 rounded-xl text-xs font-bold transition-all ${
+                              selectedSeason === s.season_number
+                                ? 'bg-primary-600 text-white shadow'
+                                : 'bg-dark-800 text-slate-400 hover:text-white hover:bg-dark-750'
+                            }`}
+                          >
+                            <span>Saison {s.season_number}</span>
+                            <span className="ml-1 text-[10px] opacity-75">({s.episode_count})</span>
+                          </button>
+                        ))}
+                    </div>
+                  </div>
+
+                  {/* Liste des épisodes de la saison sélectionnée */}
+                  {loadingSeason ? (
+                    <div className="p-8 flex items-center justify-center">
+                      <div className="w-8 h-8 border-2 border-primary-500 border-t-transparent rounded-full animate-spin" />
+                    </div>
+                  ) : seasonEpisodes.length > 0 ? (
+                    <div className="space-y-3 max-h-96 overflow-y-auto pr-1">
+                      {seasonEpisodes.map((ep) => (
+                        <div
+                          key={ep.id}
+                          className="p-3.5 rounded-xl bg-dark-850/80 border border-white/5 hover:border-white/10 flex flex-col sm:flex-row gap-3.5 transition-colors"
+                        >
+                          {/* Vignette de l'épisode */}
+                          {ep.still_path ? (
+                            <img
+                              src={ep.still_path}
+                              alt={ep.name}
+                              className="w-full sm:w-36 aspect-video rounded-lg object-cover border border-white/10 shrink-0"
+                            />
+                          ) : (
+                            <div className="w-full sm:w-36 aspect-video rounded-lg bg-dark-800 border border-white/5 flex items-center justify-center text-slate-500 shrink-0">
+                              <Tv className="w-6 h-6" />
+                            </div>
+                          )}
+
+                          <div className="flex-1 min-w-0 space-y-1">
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                              <div className="flex items-center gap-2">
+                                <span className="text-xs font-black text-primary-400 font-mono">
+                                  E{ep.episode_number}
+                                </span>
+                                <h4 className="text-xs sm:text-sm font-bold text-white line-clamp-1">
+                                  {ep.name}
+                                </h4>
+                              </div>
+
+                              <div className="flex items-center gap-2 text-[11px] text-slate-400">
+                                {ep.air_date && (
+                                  <span className="flex items-center gap-1">
+                                    <Calendar className="w-3 h-3 text-slate-500" />
+                                    <span>{new Date(ep.air_date).toLocaleDateString('fr-FR')}</span>
+                                  </span>
+                                )}
+                                {ep.runtime && (
+                                  <span className="flex items-center gap-1">
+                                    <Clock className="w-3 h-3 text-slate-500" />
+                                    <span>{ep.runtime} min</span>
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+
+                            <p className="text-xs text-slate-400 line-clamp-2 leading-relaxed">
+                              {ep.overview || 'Aucun synopsis disponible pour cet épisode.'}
+                            </p>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="p-6 text-center text-xs text-slate-500 bg-dark-850/40 rounded-xl border border-white/5">
+                      Aucun épisode répertorié pour cette saison.
+                    </div>
+                  )}
+                </div>
+              )}
+
               {/* Cast & Crew */}
               {item.cast && item.cast.length > 0 && (
-                <div className="space-y-3">
+                <div className="space-y-3 pt-2 border-t border-white/5">
                   <h3 className="text-sm font-bold uppercase tracking-wider text-slate-400">
                     Distribution & Acteurs
                   </h3>

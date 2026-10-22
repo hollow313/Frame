@@ -52,7 +52,13 @@ export const Settings: React.FC = () => {
 
   // Form states for User Simkl
   const [userSimklClientId, setUserSimklClientId] = useState('');
-  const [simklPinData, setSimklPinData] = useState<{ user_code: string; verification_url: string } | null>(null);
+  const [userSimklClientSecret, setUserSimklClientSecret] = useState('');
+  const [simklRedirectUri, setSimklRedirectUri] = useState(`${window.location.origin}/settings`);
+  const [copiedRedirect, setCopiedRedirect] = useState(false);
+  const [simklConnectingOAuth, setSimklConnectingOAuth] = useState(false);
+  const [simklOAuthError, setSimklOAuthError] = useState<string | null>(null);
+  const [simklDeviceCode, setSimklDeviceCode] = useState<string | null>(null);
+  const [simklPinData, setSimklPinData] = useState<{ user_code: string; verification_url: string; device_code?: string } | null>(null);
   const [simklGeneratingPin, setSimklGeneratingPin] = useState(false);
   const [checkingPin, setCheckingPin] = useState(false);
   const [simklPinError, setSimklPinError] = useState<string | null>(null);
@@ -91,12 +97,52 @@ export const Settings: React.FC = () => {
     if (user?.simklClientId) {
       setUserSimklClientId(user.simklClientId);
     }
+    if (user?.simklClientSecret) {
+      setUserSimklClientSecret(user.simklClientSecret);
+    }
     if (user?.jellyfinServerUrl) {
       setUserJellyfinUrl(user.jellyfinServerUrl);
     } else {
       api.getJellyfinServerInfo().then((info) => {
         if (info.serverUrl) setUserJellyfinUrl(info.serverUrl);
       }).catch(() => {});
+    }
+
+    // Traiter un retour de redirection OAuth Simkl si ?code= est présent
+    const urlParams = new URLSearchParams(window.location.search);
+    const code = urlParams.get('code');
+    if (code) {
+      const verifier = localStorage.getItem('simkl_oauth_verifier');
+      const redirectUri = localStorage.getItem('simkl_oauth_redirect_uri') || `${window.location.origin}/settings`;
+      const savedClientId = localStorage.getItem('simkl_oauth_client_id') || undefined;
+      const savedClientSecret = localStorage.getItem('simkl_oauth_client_secret') || undefined;
+
+      if (verifier) {
+        setSimklConnectingOAuth(true);
+        api.callbackSimklOAuth({
+          code,
+          codeVerifier: verifier,
+          redirectUri,
+          clientId: savedClientId,
+          clientSecret: savedClientSecret,
+        })
+          .then(async (res) => {
+            alert(res.message || 'Compte Simkl lié avec succès !');
+            localStorage.removeItem('simkl_oauth_verifier');
+            localStorage.removeItem('simkl_oauth_state');
+            localStorage.removeItem('simkl_oauth_redirect_uri');
+            localStorage.removeItem('simkl_oauth_client_id');
+            localStorage.removeItem('simkl_oauth_client_secret');
+            window.history.replaceState({}, document.title, window.location.pathname);
+            await refreshUser();
+          })
+          .catch((err) => {
+            setSimklOAuthError(err.message || 'Erreur lors de la validation OAuth Simkl');
+          })
+          .finally(() => {
+            setSimklConnectingOAuth(false);
+          });
+      }
     }
   }, [isAdmin, user]);
 
@@ -182,13 +228,49 @@ export const Settings: React.FC = () => {
     }
   };
 
-  // ================= SIMKL PIN FLOW & MANUAL =================
+  // ================= SIMKL OAUTH & PIN FLOW =================
+  const handleStartSimklOAuth = async () => {
+    if (!userSimklClientId.trim()) {
+      setSimklOAuthError('Veuillez renseigner votre Client ID Simkl avant de vous connecter.');
+      return;
+    }
+    setSimklConnectingOAuth(true);
+    setSimklOAuthError(null);
+    try {
+      const redirectUri = simklRedirectUri.trim() || `${window.location.origin}/settings`;
+      const res = await api.initSimklOAuth({
+        clientId: userSimklClientId.trim(),
+        clientSecret: userSimklClientSecret.trim() || undefined,
+        redirectUri,
+      });
+
+      localStorage.setItem('simkl_oauth_verifier', res.codeVerifier);
+      localStorage.setItem('simkl_oauth_state', res.state);
+      localStorage.setItem('simkl_oauth_redirect_uri', redirectUri);
+      localStorage.setItem('simkl_oauth_client_id', userSimklClientId.trim());
+      if (userSimklClientSecret.trim()) {
+        localStorage.setItem('simkl_oauth_client_secret', userSimklClientSecret.trim());
+      }
+
+      window.location.href = res.authUrl;
+    } catch (err: any) {
+      setSimklOAuthError(err.message || 'Erreur lors de l\'initialisation OAuth');
+      setSimklConnectingOAuth(false);
+    }
+  };
+
   const handleStartSimklPin = async () => {
     setSimklGeneratingPin(true);
     setSimklPinError(null);
     try {
-      const pin = await api.getSimklPin(userSimklClientId.trim() || undefined);
+      const pin = await api.getSimklPin(
+        userSimklClientId.trim() || undefined,
+        userSimklClientSecret.trim() || undefined
+      );
       setSimklPinData(pin);
+      if (pin.device_code) {
+        setSimklDeviceCode(pin.device_code);
+      }
     } catch (err: any) {
       setSimklPinError(err.message || 'Impossible de générer le code PIN Simkl.');
     } finally {
@@ -201,10 +283,16 @@ export const Settings: React.FC = () => {
     setCheckingPin(true);
     setSimklPinError(null);
     try {
-      const res = await api.checkSimklPin(simklPinData.user_code, userSimklClientId.trim() || undefined);
+      const res = await api.checkSimklPin(
+        simklPinData.user_code,
+        userSimklClientId.trim() || undefined,
+        simklDeviceCode || simklPinData.device_code || undefined,
+        userSimklClientSecret.trim() || undefined
+      );
       if (res.authorized) {
         alert(res.message);
         setSimklPinData(null);
+        setSimklDeviceCode(null);
         await refreshUser();
       } else {
         setSimklPinError(res.message || 'Le code n\'a pas encore été validé sur Simkl. Cliquez sur « Valider sur Simkl », connectez-vous et autorisez Frame.');
@@ -918,118 +1006,198 @@ export const Settings: React.FC = () => {
               </div>
             ) : (
               <div className="space-y-4">
-                {/* Guide pas-à-pas Simkl */}
-                <div className="p-4 rounded-xl bg-dark-850/70 border border-white/5 space-y-3">
+                {/* Guide pas-à-pas Simkl OAuth V2 */}
+                <div className="p-4 rounded-xl bg-dark-850/80 border border-white/5 space-y-2.5">
                   <div className="flex items-center gap-2 text-xs font-bold text-primary-400">
                     <HelpCircle className="w-4 h-4" />
-                    <span>Comment obtenir votre Client ID Simkl (en 1 minute chrono) :</span>
+                    <span>Guide rapide de configuration Simkl (Auth V2) :</span>
                   </div>
                   <ol className="text-xs text-slate-300 space-y-1.5 list-decimal list-inside pl-1">
                     <li>
-                      Allez sur{' '}
+                      Ouvrez{' '}
                       <a
                         href="https://simkl.com/settings/developer/new"
                         target="_blank"
                         rel="noreferrer"
-                        className="text-primary-400 underline hover:text-primary-300 inline-flex items-center gap-1"
+                        className="text-primary-400 underline hover:text-primary-300 inline-flex items-center gap-1 font-medium"
                       >
                         simkl.com/settings/developer/new
                         <ExternalLink className="w-3 h-3" />
                       </a>
                     </li>
                     <li>
-                      Nom de l'application : <strong>Frame</strong>
+                      Nom de l'application : <strong className="text-white">Frame</strong>
                     </li>
                     <li>
-                      Dans le champ <strong>Redirect URLs</strong>, mettez simplement : <code className="bg-dark-900 px-1.5 py-0.5 rounded text-primary-300">https://simkl.com</code>
+                      Type : <strong className="text-white">Browser sign-in + server callback</strong>
                     </li>
                     <li>
-                      Cliquez sur <strong>Save App</strong>, puis copiez le <strong>Client ID</strong> généré.
+                      Dans <strong>Redirect URI</strong>, collez l'URL indiquée ci-dessous (copiable en 1 clic).
+                    </li>
+                    <li>
+                      Enregistrez l'application, copiez votre <strong>Client ID</strong> et votre <strong>Client Secret</strong>, puis cliquez sur <strong>Se connecter avec Simkl (OAuth 2.0)</strong>.
                     </li>
                   </ol>
                 </div>
 
-                {/* Champ Client ID et Génération de PIN */}
-                <div className="p-4 rounded-xl bg-dark-850 border border-white/5 space-y-3">
-                  <label className="text-xs font-bold text-white block">
-                    Votre Client ID Simkl :
-                  </label>
-                  <div className="flex flex-col sm:flex-row gap-2">
-                    <input
-                      type="text"
-                      value={userSimklClientId}
-                      onChange={(e) => setUserSimklClientId(e.target.value)}
-                      placeholder="Collez ici votre Client ID Simkl (ex: 82fd...)"
-                      className="flex-1 bg-dark-900 border border-white/10 rounded-xl px-3 py-2 text-xs text-slate-100 font-mono focus:outline-none focus:border-primary-500"
-                    />
-                    <button
-                      type="button"
-                      onClick={handleStartSimklPin}
-                      disabled={simklGeneratingPin}
-                      className="px-4 py-2 bg-primary-600 hover:bg-primary-500 text-white text-xs font-bold rounded-xl shadow-glow transition-all hover:scale-105 disabled:opacity-50 whitespace-nowrap"
-                    >
-                      {simklGeneratingPin ? 'Génération...' : 'Générer mon code PIN Simkl'}
-                    </button>
+                {/* Formulaire OAuth 2.0 Principal */}
+                <div className="p-4 rounded-xl bg-dark-850 border border-white/5 space-y-4">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <div>
+                      <label className="text-xs font-bold text-white block mb-1">
+                        Client ID Simkl <span className="text-rose-400">*</span>
+                      </label>
+                      <input
+                        type="text"
+                        value={userSimklClientId}
+                        onChange={(e) => setUserSimklClientId(e.target.value)}
+                        placeholder="Ex: fe026d2b88c9ac258798..."
+                        className="w-full bg-dark-900 border border-white/10 rounded-xl px-3 py-2 text-xs text-slate-100 font-mono focus:outline-none focus:border-primary-500"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="text-xs font-bold text-white block mb-1">
+                        Client Secret Simkl (Requis pour OAuth V2)
+                      </label>
+                      <input
+                        type="password"
+                        value={userSimklClientSecret}
+                        onChange={(e) => setUserSimklClientSecret(e.target.value)}
+                        placeholder="Ex: simkl_cs_N9tbdJw..."
+                        className="w-full bg-dark-900 border border-white/10 rounded-xl px-3 py-2 text-xs text-slate-100 font-mono focus:outline-none focus:border-primary-500"
+                      />
+                    </div>
                   </div>
 
-                  {simklPinError && (
+                  <div>
+                    <label className="text-xs font-bold text-slate-300 block mb-1">
+                      URL de redirection (Redirect URI pour votre app Simkl) :
+                    </label>
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        value={simklRedirectUri}
+                        onChange={(e) => setSimklRedirectUri(e.target.value)}
+                        className="flex-1 bg-dark-900 border border-white/10 rounded-xl px-3 py-2 text-xs text-slate-300 font-mono focus:outline-none"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => {
+                          navigator.clipboard.writeText(simklRedirectUri);
+                          setCopiedRedirect(true);
+                          setTimeout(() => setCopiedRedirect(false), 2000);
+                        }}
+                        className="px-3 py-2 bg-dark-800 hover:bg-dark-750 text-slate-200 text-xs font-semibold rounded-xl border border-white/10 shrink-0"
+                      >
+                        {copiedRedirect ? '✓ Copié !' : 'Copier l\'URL'}
+                      </button>
+                    </div>
+                    <p className="text-[11px] text-slate-400 mt-1">
+                      Assurez-vous que cette URL exacte est enregistrée dans les paramètres de votre application sur le site de Simkl.
+                    </p>
+                  </div>
+
+                  {simklOAuthError && (
                     <div className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-300 text-xs flex items-start gap-2">
                       <AlertCircle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
-                      <span>{simklPinError}</span>
+                      <span>{simklOAuthError}</span>
                     </div>
                   )}
 
-                  {simklPinData && (
-                    <div className="p-4 rounded-xl bg-primary-600/15 border border-primary-500/30 space-y-3 mt-3">
-                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                        <div>
-                          <span className="text-[11px] text-primary-300 block font-medium">Votre code PIN à valider :</span>
-                          <span className="text-2xl font-black text-white font-mono tracking-widest">{simklPinData.user_code}</span>
-                        </div>
-                        <a
-                          href={simklPinData.verification_url}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="flex items-center justify-center gap-1.5 px-4 py-2.5 bg-primary-600 hover:bg-primary-500 text-white text-xs font-bold rounded-xl shadow-glow transition-transform hover:scale-105"
-                        >
-                          <span>1. Valider sur Simkl</span>
-                          <ExternalLink className="w-3.5 h-3.5" />
-                        </a>
-                      </div>
-
-                      <div className="pt-2 border-t border-primary-500/20 flex flex-col sm:flex-row items-center justify-between gap-2">
-                        <p className="text-[11px] text-slate-300">
-                          Après avoir cliqué sur <strong>Approve</strong> sur Simkl, validez ici :
-                        </p>
-                        <button
-                          type="button"
-                          onClick={handleCheckSimklPin}
-                          disabled={checkingPin}
-                          className="w-full sm:w-auto px-4 py-2 bg-emerald-500 hover:bg-emerald-600 text-white text-xs font-bold rounded-xl shadow transition-all hover:scale-105 disabled:opacity-50"
-                        >
-                          {checkingPin ? 'Vérification...' : '2. J\'ai validé le code sur Simkl !'}
-                        </button>
-                      </div>
-                    </div>
-                  )}
+                  <button
+                    type="button"
+                    onClick={handleStartSimklOAuth}
+                    disabled={simklConnectingOAuth || !userSimklClientId.trim()}
+                    className="w-full sm:w-auto px-6 py-2.5 bg-gradient-to-r from-primary-600 to-indigo-600 hover:from-primary-500 hover:to-indigo-500 text-white text-xs font-bold rounded-xl shadow-glow transition-all hover:scale-105 disabled:opacity-50 flex items-center justify-center gap-2"
+                  >
+                    <RefreshCw className={`w-4 h-4 ${simklConnectingOAuth ? 'animate-spin' : ''}`} />
+                    <span>{simklConnectingOAuth ? 'Connexion à Simkl...' : 'Se connecter avec Simkl (OAuth 2.0)'}</span>
+                  </button>
                 </div>
+
+                {/* Option alternative : PIN Code / Device Flow */}
+                <details className="group p-3.5 rounded-xl bg-dark-850/50 border border-white/5 text-xs">
+                  <summary className="font-bold text-slate-400 hover:text-slate-200 cursor-pointer list-none flex items-center justify-between">
+                    <span>Méthode alternative : Connexion par code PIN (TV / Console / Device flow)</span>
+                    <span className="text-[10px] text-primary-400 group-open:rotate-180 transition-transform">▼</span>
+                  </summary>
+                  <div className="mt-3 pt-3 border-t border-white/5 space-y-3">
+                    <p className="text-[11px] text-slate-400">
+                      Si vous utilisez une application enregistrée en mode Device/TV ou Auth V1, vous pouvez générer un code PIN à valider en ligne :
+                    </p>
+                    <div className="flex gap-2">
+                      <button
+                        type="button"
+                        onClick={handleStartSimklPin}
+                        disabled={simklGeneratingPin || !userSimklClientId.trim()}
+                        className="px-4 py-2 bg-dark-800 hover:bg-dark-750 text-white text-xs font-bold rounded-xl border border-white/10 disabled:opacity-50"
+                      >
+                        {simklGeneratingPin ? 'Génération...' : 'Générer un code PIN Simkl'}
+                      </button>
+                    </div>
+
+                    {simklPinError && (
+                      <div className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-300 text-xs flex items-start gap-2">
+                        <AlertCircle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
+                        <span>{simklPinError}</span>
+                      </div>
+                    )}
+
+                    {simklPinData && (
+                      <div className="p-4 rounded-xl bg-primary-600/15 border border-primary-500/30 space-y-3 mt-2">
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                          <div>
+                            <span className="text-[11px] text-primary-300 block font-medium">Votre code PIN à valider :</span>
+                            <span className="text-2xl font-black text-white font-mono tracking-widest">{simklPinData.user_code}</span>
+                          </div>
+                          <a
+                            href={simklPinData.verification_url}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="flex items-center justify-center gap-1.5 px-4 py-2 bg-primary-600 hover:bg-primary-500 text-white text-xs font-bold rounded-xl shadow transition-transform hover:scale-105"
+                          >
+                            <span>1. Valider sur Simkl</span>
+                            <ExternalLink className="w-3.5 h-3.5" />
+                          </a>
+                        </div>
+
+                        <div className="pt-2 border-t border-primary-500/20 flex flex-col sm:flex-row items-center justify-between gap-2">
+                          <p className="text-[11px] text-slate-300">
+                            Après avoir cliqué sur <strong>Approve</strong> sur Simkl, cliquez ci-contre :
+                          </p>
+                          <button
+                            type="button"
+                            onClick={handleCheckSimklPin}
+                            disabled={checkingPin}
+                            className="w-full sm:w-auto px-4 py-2 bg-emerald-500 hover:bg-emerald-600 text-white text-xs font-bold rounded-xl shadow transition-all hover:scale-105 disabled:opacity-50"
+                          >
+                            {checkingPin ? 'Vérification...' : '2. J\'ai validé le code sur Simkl !'}
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </details>
 
                 {/* Option alternative : Access Token direct */}
                 <details className="group p-3.5 rounded-xl bg-dark-850/50 border border-white/5 text-xs">
                   <summary className="font-bold text-slate-400 hover:text-slate-200 cursor-pointer list-none flex items-center justify-between">
-                    <span>Ou lier directement avec un Access Token Simkl</span>
+                    <span>Méthode alternative : Jeton d'accès direct (Bearer Token)</span>
                     <span className="text-[10px] text-primary-400 group-open:rotate-180 transition-transform">▼</span>
                   </summary>
                   <form onSubmit={handleLinkSimklManual} className="mt-3 pt-3 border-t border-white/5 space-y-2">
                     <p className="text-[11px] text-slate-400">
-                      Si vous disposez déjà d'un jeton d'accès Simkl (OAuth Token), vous pouvez le coller directement ci-dessous :
+                      Si vous disposez déjà d'un jeton d'accès utilisateur Simkl, collez-le ci-dessous.
+                      <br />
+                      <strong className="text-amber-400 font-semibold">⚠️ Attention :</strong> Ne collez pas votre Client Secret (qui commence par <code>simkl_cs_</code>) ici ! Le Client Secret doit être saisi dans le formulaire principal au-dessus.
                     </p>
                     <div className="flex gap-2">
                       <input
                         type="text"
                         value={simklManualToken}
                         onChange={(e) => setSimklManualToken(e.target.value)}
-                        placeholder="Bearer token Simkl..."
+                        placeholder="Bearer access token Simkl (commence par simkl_at_ ou chaîne hexadécimale)..."
                         className="flex-1 bg-dark-900 border border-white/10 rounded-xl px-3 py-1.5 text-xs text-slate-100 font-mono"
                       />
                       <button
