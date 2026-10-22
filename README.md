@@ -167,10 +167,22 @@ Pour suivre exactement ce que chaque utilisateur regarde en temps réel :
 1. **Au niveau Administrateur** : Renseignez l'URL globale de votre serveur Jellyfin dans **Paramètres** > **Intégrations Serveur** (ex: `http://serveur:8096`).
 2. **Au niveau de chaque Utilisateur** : Chaque membre peut lier son propre compte Jellyfin personnel dans **Paramètres** > **Mon Profil, Simkl & Jellyfin** avec ses identifiants.
 3. Le bandeau d'accueil affiche automatiquement la lecture en direct avec pourcentage de progression, et le bouton **« Synchroniser mes vues Jellyfin »** importe votre historique exact.
+4. **Lancement direct dans l'application Jellyfin pour PC** : Lorsqu'une œuvre est détectée sur votre serveur Jellyfin, le bouton **« Voir sur Jellyfin »** utilise le protocole natif `jellyfin://` pour lancer directement votre application de bureau Jellyfin installée sur votre PC (sans ouvrir de page web dans le navigateur).
+5. **Blocage automatique des demandes Seer inutiles** : Dès qu'un film ou une série est déjà présent sur votre serveur (disponible dans Jellyfin, téléchargé dans Sonarr/Radarr ou validé dans Seer), le bouton « Demander sur Seer » est automatiquement masqué et remplacé par le badge *« Présent sur le serveur »*.
 
 ---
 
-### 6. Sorties du moment par Plateforme de Streaming
+### 6. Préférences de Contenu & Exclusion des Mangas / Séries / Films
+
+Chaque utilisateur peut personnaliser les types d'œuvres qu'il souhaite voir apparaître sur son interface :
+- Dans **Paramètres** > **Mon Profil, Simkl & Jellyfin** > **« Mes Préférences de Contenu »** :
+  - **Films** : Cochez/décochez pour inclure ou masquer les films.
+  - **Séries TV** : Cochez/décochez pour inclure ou masquer les séries.
+  - **Animés / Mangas** : Si vous ne regardez jamais de manga, décochez simplement cette case : les mangas et animés seront **totalement exclus** du carrousel d'accueil et des recommandations personnalisées.
+
+---
+
+### 7. Sorties du moment par Plateforme de Streaming
 
 Grâce à l'intégration JustWatch / TMDB :
 - L'onglet **Plateformes** permet de filtrer l'ensemble des films et séries du moment par service de streaming disponible en France (**Netflix, Prime Video, Disney+, Crunchyroll, Apple TV+, Canal+**), cumulable avec les filtres par genre.

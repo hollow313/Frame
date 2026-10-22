@@ -38,6 +38,7 @@ export const MediaModal: React.FC<MediaModalProps> = ({
   const [loading, setLoading] = useState<boolean>(true);
   const [seerStatus, setSeerStatus] = useState<any>(null);
   const [arrStatus, setArrStatus] = useState<any>(null);
+  const [jellyfinItem, setJellyfinItem] = useState<{ inJellyfin: boolean; itemId?: string; name?: string } | null>(null);
   const [requestingSeer, setRequestingSeer] = useState<boolean>(false);
   const [showTrailer, setShowTrailer] = useState<boolean>(false);
   const [is4k, setIs4k] = useState<boolean>(false);
@@ -72,6 +73,11 @@ export const MediaModal: React.FC<MediaModalProps> = ({
           .then((res) => setArrStatus(res))
           .catch(() => {});
       }
+
+      // Vérifier si présent dans Jellyfin
+      api.checkJellyfinMedia(mediaType, id, details.title)
+        .then((res) => setJellyfinItem(res))
+        .catch(() => {});
     } catch (err) {
       console.error('Erreur chargement détails média', err);
     } finally {
@@ -280,13 +286,28 @@ export const MediaModal: React.FC<MediaModalProps> = ({
                   </button>
                 </div>
 
-                {/* Right: Server / Seer Request Button */}
+                {/* Right: Server / Seer Request Button / Jellyfin Direct App */}
                 <div className="flex items-center gap-2">
-                  {seerStatus?.status === 5 ? (
-                    <span className="flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-xl bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
-                      <CheckCircle2 className="w-4 h-4" />
-                      Disponible sur Seer
-                    </span>
+                  {/* Si déjà présent sur le serveur (Sonarr/Radarr/Jellyfin/Seer Disponible) : INTERDIRE demande Seer */}
+                  {Boolean((arrStatus?.inLibrary && arrStatus?.downloaded) || seerStatus?.status === 5 || jellyfinItem?.inJellyfin) ? (
+                    <div className="flex items-center gap-2">
+                      <span className="flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-xl bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
+                        <CheckCircle2 className="w-4 h-4" />
+                        Présent sur le serveur
+                      </span>
+
+                      {/* Bouton pour ouvrir l'application Jellyfin sur PC directement (protocole jellyfin://) */}
+                      {jellyfinItem?.inJellyfin && jellyfinItem?.itemId && (
+                        <a
+                          href={`jellyfin://item?id=${jellyfinItem.itemId}`}
+                          className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold shadow-glow transition-all hover:scale-105"
+                          title="Lancer dans l'application Jellyfin pour PC (jellyfin://)"
+                        >
+                          <Play className="w-3.5 h-3.5 fill-white" />
+                          <span>Voir sur Jellyfin</span>
+                        </a>
+                      )}
+                    </div>
                   ) : seerStatus?.status === 3 ? (
                     <span className="flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-xl bg-amber-500/20 text-amber-400 border border-amber-500/30">
                       <HardDrive className="w-4 h-4 animate-pulse" />

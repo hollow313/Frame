@@ -108,6 +108,9 @@ export interface User {
   authProvider?: 'local' | 'ldap' | 'sso';
   simklConnected?: boolean;
   jellyfinConnected?: boolean;
+  prefIncludeMovies?: boolean;
+  prefIncludeTv?: boolean;
+  prefIncludeAnime?: boolean;
   createdAt?: string;
 }
 

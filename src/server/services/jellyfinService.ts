@@ -34,8 +34,60 @@ export class JellyfinService {
   }
 
   /**
-   * Tester la connexion globale au serveur Jellyfin
+   * Rechercher un média dans Jellyfin par son ID TMDB ou titre
    */
+  public static async findItemByTmdbId(
+    accessToken: string,
+    jellyfinUserId: string,
+    tmdbId: number,
+    title?: string,
+    mediaType: 'movie' | 'tv' = 'movie'
+  ): Promise<{ found: boolean; itemId?: string; name?: string; serverUrl: string }> {
+    const url = this.getUrl();
+    if (!url || !accessToken) return { found: false, serverUrl: url };
+
+    const typeFilter = mediaType === 'movie' ? 'Movie' : 'Series';
+
+    try {
+      // 1. Recherche directe par Provider ID TMDB
+      const queryUrl = `${url}/Users/${jellyfinUserId}/Items?Recursive=true&AnyProviderIdEquals=tmdb.${tmdbId}&IncludeItemTypes=${typeFilter}`;
+      const res = await fetch(queryUrl, {
+        headers: {
+          'X-Emby-Authorization': this.getAuthHeader(accessToken),
+        },
+      });
+
+      if (res.ok) {
+        const data = await res.json() as any;
+        if (data.Items && data.Items.length > 0) {
+          const item = data.Items[0];
+          return { found: true, itemId: item.Id, name: item.Name, serverUrl: url };
+        }
+      }
+
+      // 2. Repli par recherche de titre si non trouvé par ID TMDB direct
+      if (title) {
+        const searchUrl = `${url}/Users/${jellyfinUserId}/Items?Recursive=true&SearchTerm=${encodeURIComponent(title)}&IncludeItemTypes=${typeFilter}&Limit=1`;
+        const searchRes = await fetch(searchUrl, {
+          headers: {
+            'X-Emby-Authorization': this.getAuthHeader(accessToken),
+          },
+        });
+
+        if (searchRes.ok) {
+          const data = await searchRes.json() as any;
+          if (data.Items && data.Items.length > 0) {
+            const item = data.Items[0];
+            return { found: true, itemId: item.Id, name: item.Name, serverUrl: url };
+          }
+        }
+      }
+
+      return { found: false, serverUrl: url };
+    } catch {
+      return { found: false, serverUrl: url };
+    }
+  }
   public static async testServer(): Promise<{ success: boolean; version?: string; message: string }> {
     const url = this.getUrl();
     if (!url) return { success: false, message: 'URL Jellyfin non configurée' };

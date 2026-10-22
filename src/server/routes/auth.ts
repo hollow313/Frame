@@ -227,7 +227,7 @@ router.post('/login', async (req, res: Response): Promise<void> => {
 // Profil actuel
 router.get('/me', authenticateToken, (req: AuthenticatedRequest, res: Response) => {
   try {
-    const stmt = db.prepare('SELECT id, username, role, display_name, avatar_url, auth_provider, simkl_access_token, jellyfin_user_id, created_at FROM users WHERE id = ?');
+    const stmt = db.prepare('SELECT id, username, role, display_name, avatar_url, auth_provider, simkl_access_token, jellyfin_user_id, pref_include_movies, pref_include_tv, pref_include_anime, created_at FROM users WHERE id = ?');
     const user = stmt.get(req.user!.id) as any;
 
     if (!user) {
@@ -244,8 +244,39 @@ router.get('/me', authenticateToken, (req: AuthenticatedRequest, res: Response) 
       authProvider: user.auth_provider || 'local',
       simklConnected: Boolean(user.simkl_access_token),
       jellyfinConnected: Boolean(user.jellyfin_user_id),
+      prefIncludeMovies: user.pref_include_movies !== 0,
+      prefIncludeTv: user.pref_include_tv !== 0,
+      prefIncludeAnime: user.pref_include_anime === 1,
       createdAt: user.created_at,
     });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Mettre à jour les préférences de contenu de l'utilisateur
+router.put('/preferences', authenticateToken, (req: AuthenticatedRequest, res: Response): void => {
+  try {
+    const userId = req.user!.id;
+    const { prefIncludeMovies, prefIncludeTv, prefIncludeAnime } = req.body;
+
+    const stmt = db.prepare(`
+      UPDATE users SET
+        pref_include_movies = COALESCE(?, pref_include_movies),
+        pref_include_tv = COALESCE(?, pref_include_tv),
+        pref_include_anime = COALESCE(?, pref_include_anime),
+        updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `);
+
+    stmt.run(
+      prefIncludeMovies !== undefined ? (prefIncludeMovies ? 1 : 0) : null,
+      prefIncludeTv !== undefined ? (prefIncludeTv ? 1 : 0) : null,
+      prefIncludeAnime !== undefined ? (prefIncludeAnime ? 1 : 0) : null,
+      userId
+    );
+
+    res.json({ success: true, message: 'Préférences de contenu mises à jour !' });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }

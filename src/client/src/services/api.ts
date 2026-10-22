@@ -62,6 +62,11 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(payload),
     }),
+  updatePreferences: (payload: { prefIncludeMovies?: boolean; prefIncludeTv?: boolean; prefIncludeAnime?: boolean }) =>
+    request<{ success: boolean; message: string }>('/auth/preferences', {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    }),
   getMe: () => request<User>('/auth/me'),
   logout: () => request<{ success: boolean }>('/auth/logout', { method: 'POST' }),
 
@@ -176,6 +181,10 @@ export const api = {
   unlinkJellyfin: () => request<{ success: boolean; message: string }>('/jellyfin/unlink', { method: 'POST' }),
   syncJellyfin: () => request<{ success: boolean; message: string; result: any }>('/jellyfin/sync', { method: 'POST' }),
   getJellyfinNowPlaying: () => request<{ active: boolean; items: any[] }>('/jellyfin/now-playing'),
+  checkJellyfinMedia: (mediaType: 'movie' | 'tv', tmdbId: number, title?: string) =>
+    request<{ inJellyfin: boolean; itemId?: string; name?: string; serverUrl?: string }>(
+      `/jellyfin/check/${mediaType}/${tmdbId}${title ? `?title=${encodeURIComponent(title)}` : ''}`
+    ),
 
   // ==================== SETTINGS (ADMIN) ====================
   getSettings: () => request<Record<string, { configured: boolean; value?: string }>>('/settings'),

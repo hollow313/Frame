@@ -6,6 +6,40 @@ import db from '../db/index.js';
 const router = Router();
 router.use(authenticateToken);
 
+// Vérifier si un média spécifique est présent dans Jellyfin pour cet utilisateur
+router.get('/check/:mediaType/:tmdbId', async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const userId = req.user!.id;
+    const { mediaType, tmdbId } = req.params;
+    const title = req.query.title as string | undefined;
+
+    const userStmt = db.prepare('SELECT jellyfin_user_id, jellyfin_access_token FROM users WHERE id = ?');
+    const user = userStmt.get(userId) as any;
+
+    if (!user || !user.jellyfin_access_token || !user.jellyfin_user_id) {
+      res.json({ inJellyfin: false, message: 'Compte Jellyfin non lié' });
+      return;
+    }
+
+    const check = await JellyfinService.findItemByTmdbId(
+      user.jellyfin_access_token,
+      user.jellyfin_user_id,
+      parseInt(tmdbId, 10),
+      title,
+      mediaType as 'movie' | 'tv'
+    );
+
+    res.json({
+      inJellyfin: check.found,
+      itemId: check.itemId,
+      name: check.name,
+      serverUrl: check.serverUrl,
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Tester le serveur Jellyfin
 router.get('/test-server', async (_req, res) => {
   try {

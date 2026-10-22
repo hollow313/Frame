@@ -60,6 +60,12 @@ export const Settings: React.FC = () => {
   const [syncingJellyfin, setSyncingJellyfin] = useState(false);
   const [jellyfinSyncMessage, setJellyfinSyncMessage] = useState<string | null>(null);
 
+  // Form states for Content Preferences (Movies, TV, Anime/Manga)
+  const [prefMovies, setPrefMovies] = useState<boolean>(user?.prefIncludeMovies !== false);
+  const [prefTv, setPrefTv] = useState<boolean>(user?.prefIncludeTv !== false);
+  const [prefAnime, setPrefAnime] = useState<boolean>(user?.prefIncludeAnime === true);
+  const [prefSaved, setPrefSaved] = useState<boolean>(false);
+
   // Status testing states
   const [testResults, setTestResults] = useState<Record<string, { loading: boolean; success?: boolean; message?: string }>>({});
   const [saveSuccess, setSaveSuccess] = useState(false);
@@ -236,6 +242,22 @@ export const Settings: React.FC = () => {
       refreshUser();
     } catch (e) {
       console.error(e);
+    }
+  };
+
+  const handleSavePreferences = async (e: React.FormEvent) => {
+    e.preventDefault();
+    try {
+      await api.updatePreferences({
+        prefIncludeMovies: prefMovies,
+        prefIncludeTv: prefTv,
+        prefIncludeAnime: prefAnime,
+      });
+      setPrefSaved(true);
+      refreshUser();
+      setTimeout(() => setPrefSaved(false), 3000);
+    } catch (err: any) {
+      alert(err.message || 'Erreur enregistrement préférences');
     }
   };
 
@@ -681,6 +703,77 @@ export const Settings: React.FC = () => {
       {/* User Simkl & Jellyfin Tab */}
       {activeTab === 'user' && (
         <div className="space-y-6">
+          {/* CONTENT PREFERENCES (MOVIES / TV / ANIME) */}
+          <form onSubmit={handleSavePreferences} className="p-6 rounded-2xl bg-dark-900 border border-white/5 space-y-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-primary-600/20 text-primary-400 flex items-center justify-center">
+                  <Layers className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-white">Mes Préférences de Contenu</h3>
+                  <p className="text-xs text-slate-400">
+                    Personnalisez les types d'œuvres proposés dans votre carrousel et vos recommandations.
+                  </p>
+                </div>
+              </div>
+
+              <button
+                type="submit"
+                className="px-4 py-2 bg-primary-600 hover:bg-primary-500 text-white rounded-xl text-xs font-bold shadow-glow"
+              >
+                Enregistrer
+              </button>
+            </div>
+
+            {prefSaved && (
+              <p className="text-xs text-emerald-400 bg-emerald-500/10 border border-emerald-500/30 p-2.5 rounded-xl flex items-center gap-2">
+                <Check className="w-4 h-4" />
+                <span>Vos préférences ont été enregistrées avec succès !</span>
+              </p>
+            )}
+
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-2">
+              <label className="flex items-start gap-3 p-3.5 rounded-xl bg-dark-850 border border-white/5 cursor-pointer hover:border-white/10 transition-colors">
+                <input
+                  type="checkbox"
+                  checked={prefMovies}
+                  onChange={(e) => setPrefMovies(e.target.checked)}
+                  className="mt-0.5 w-4 h-4 rounded border-slate-700 bg-dark-900 text-primary-600 focus:ring-0"
+                />
+                <div>
+                  <span className="text-xs font-bold text-white block">Films</span>
+                  <span className="text-[11px] text-slate-400">Proposer des longs-métrages</span>
+                </div>
+              </label>
+
+              <label className="flex items-start gap-3 p-3.5 rounded-xl bg-dark-850 border border-white/5 cursor-pointer hover:border-white/10 transition-colors">
+                <input
+                  type="checkbox"
+                  checked={prefTv}
+                  onChange={(e) => setPrefTv(e.target.checked)}
+                  className="mt-0.5 w-4 h-4 rounded border-slate-700 bg-dark-900 text-primary-600 focus:ring-0"
+                />
+                <div>
+                  <span className="text-xs font-bold text-white block">Séries TV</span>
+                  <span className="text-[11px] text-slate-400">Proposer des séries & saisons</span>
+                </div>
+              </label>
+
+              <label className="flex items-start gap-3 p-3.5 rounded-xl bg-dark-850 border border-white/5 cursor-pointer hover:border-white/10 transition-colors">
+                <input
+                  type="checkbox"
+                  checked={prefAnime}
+                  onChange={(e) => setPrefAnime(e.target.checked)}
+                  className="mt-0.5 w-4 h-4 rounded border-slate-700 bg-dark-900 text-primary-600 focus:ring-0"
+                />
+                <div>
+                  <span className="text-xs font-bold text-white block">Animés / Mangas</span>
+                  <span className="text-[11px] text-slate-400">Animation japonaise (décochez pour exclure totalement les mangas)</span>
+                </div>
+              </label>
+            </div>
+          </form>
           {/* SIMKL LINK (PIN CODE FLOW & DIRECT) */}
           <div className="p-6 rounded-2xl bg-dark-900 border border-white/5 space-y-4">
             <div className="flex items-center gap-3">
