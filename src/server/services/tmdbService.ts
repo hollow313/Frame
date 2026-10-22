@@ -57,6 +57,19 @@ export class TMDBService {
   }
 
   /**
+   * Rechercher une œuvre par son identifiant TVDB
+   */
+  public static async findByTvdbId(tvdbId: number): Promise<any | null> {
+    try {
+      const data = await this.request<any>(`/find/${tvdbId}`, { external_source: 'tvdb_id' });
+      const tvResults = data.tv_results || [];
+      return tvResults.length > 0 ? tvResults[0] : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
    * Obtenir les tendances (films et séries)
    */
   public static async getTrending(timeWindow: 'day' | 'week' = 'week', page: number = 1): Promise<{ results: TMDBMediaItem[]; page: number; total_pages: number }> {
@@ -651,6 +664,26 @@ export class TMDBService {
       base.number_of_episodes = item.number_of_episodes;
       base.seasons = item.seasons || [];
       base.trailer_key = trailerKey;
+
+      if (item.next_episode_to_air) {
+        base.next_episode_to_air = {
+          id: item.next_episode_to_air.id,
+          name: item.next_episode_to_air.name,
+          air_date: item.next_episode_to_air.air_date,
+          episode_number: item.next_episode_to_air.episode_number,
+          season_number: item.next_episode_to_air.season_number,
+          overview: item.next_episode_to_air.overview,
+        };
+      }
+      if (item.last_episode_to_air) {
+        base.last_episode_to_air = {
+          id: item.last_episode_to_air.id,
+          name: item.last_episode_to_air.name,
+          air_date: item.last_episode_to_air.air_date,
+          episode_number: item.last_episode_to_air.episode_number,
+          season_number: item.last_episode_to_air.season_number,
+        };
+      }
 
       // Plateformes de streaming disponibles en France (Netflix, Prime, Disney+, Crunchyroll, etc.)
       const providersFR = item['watch/providers']?.results?.FR;

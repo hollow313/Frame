@@ -123,6 +123,30 @@ export class SeerService {
   }
 
   /**
+   * Approuver manuellement une demande (lance le téléchargement Radarr / Sonarr)
+   */
+  public static async approveRequest(requestId: number): Promise<any> {
+    if (!this.isConfigured()) {
+      throw new Error("Overseerr / Jellyseerr n'est pas configuré");
+    }
+    return this.request<any>(`/request/${requestId}/approve`, {
+      method: 'POST',
+    });
+  }
+
+  /**
+   * Refuser manuellement une demande
+   */
+  public static async declineRequest(requestId: number): Promise<any> {
+    if (!this.isConfigured()) {
+      throw new Error("Overseerr / Jellyseerr n'est pas configuré");
+    }
+    return this.request<any>(`/request/${requestId}/decline`, {
+      method: 'POST',
+    });
+  }
+
+  /**
    * Obtenir toutes les demandes actuelles (Overseerr requests)
    */
   public static async getRequests(take: number = 20, skip: number = 0, filter: string = 'all'): Promise<{

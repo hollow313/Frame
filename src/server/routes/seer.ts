@@ -111,6 +111,38 @@ router.delete('/request/:requestId', async (req: AuthenticatedRequest, res: Resp
   }
 });
 
+// Approuver manuellement une demande (lance le téléchargement)
+router.post('/request/:requestId/approve', async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  try {
+    const requestId = parseInt(req.params.requestId, 10);
+    if (!requestId) {
+      res.status(400).json({ error: 'ID de demande invalide' });
+      return;
+    }
+
+    const result = await SeerService.approveRequest(requestId);
+    res.json({ success: true, message: 'Demande approuvée avec succès ! Le téléchargement est lancé.', result });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Refuser manuellement une demande
+router.post('/request/:requestId/decline', async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  try {
+    const requestId = parseInt(req.params.requestId, 10);
+    if (!requestId) {
+      res.status(400).json({ error: 'ID de demande invalide' });
+      return;
+    }
+
+    const result = await SeerService.declineRequest(requestId);
+    res.json({ success: true, message: 'Demande refusée.', result });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Envoyer une demande vers Seer
 router.post('/request', async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   try {

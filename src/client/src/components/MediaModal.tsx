@@ -609,11 +609,11 @@ export const MediaModal: React.FC<MediaModalProps> = ({
                         </a>
                       )}
                     </div>
-                  ) : Boolean(seerStatus?.requested || seerStatus?.status === 2 || seerStatus?.status === 3 || (arrStatus?.inLibrary && !arrStatus?.downloaded)) ? (
+                  ) : Boolean(seerStatus?.requested || seerStatus?.status === 2 || seerStatus?.status === 3 || (arrStatus?.inLibrary && arrStatus?.monitored && !arrStatus?.downloaded)) ? (
                     /* CAS 2: Déjà demandé sur Seer ou Sonarr/Radarr (en attente ou en recherche/traitement) */
                     <div className="flex flex-wrap items-center gap-2">
                       <div className="flex items-center gap-2">
-                        {seerStatus?.status === 3 || (arrStatus?.inLibrary && !arrStatus?.downloaded) ? (
+                        {seerStatus?.status === 3 || (arrStatus?.inLibrary && arrStatus?.monitored && !arrStatus?.downloaded) ? (
                           <span className="flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-xl bg-amber-500/20 text-amber-400 border border-amber-500/30">
                             <Clock className="w-4 h-4" />
                             Demande approuvée (en recherche)
@@ -642,15 +642,23 @@ export const MediaModal: React.FC<MediaModalProps> = ({
                       )}
                     </div>
                   ) : (
-                    /* CAS 3: Pas encore sur le serveur ni demandé -> Bouton de demande propre (sans 4K) */
-                    <button
-                      onClick={handleRequestSeer}
-                      disabled={requestingSeer}
-                      className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-gradient-to-r from-accent-cinema to-pink-600 hover:from-accent-cinema/90 hover:to-pink-500 text-white text-xs font-semibold shadow-glow-cinema transition-transform hover:scale-105 disabled:opacity-50"
-                    >
-                      <CloudDownload className="w-4 h-4" />
-                      <span>{requestingSeer ? 'Envoi...' : 'Demander sur Seer'}</span>
-                    </button>
+                    /* CAS 3: Pas encore demandé ou non monitoré dans Sonarr -> Bouton de demande propre */
+                    <div className="flex items-center gap-2">
+                      {arrStatus?.inLibrary && !arrStatus?.monitored && (
+                        <span className="text-[11px] text-slate-400 px-2 py-1 rounded-lg bg-dark-800 border border-white/5">
+                          Déjà dans Sonarr (non monitoré)
+                        </span>
+                      )}
+                      <button
+                        onClick={handleRequestSeer}
+                        disabled={requestingSeer}
+                        className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-gradient-to-r from-accent-cinema to-pink-600 hover:from-accent-cinema/90 hover:to-pink-500 text-white text-xs font-semibold shadow-glow-cinema transition-transform hover:scale-105 disabled:opacity-50"
+                        title="Créer une demande de média"
+                      >
+                        <CloudDownload className="w-4 h-4" />
+                        <span>{requestingSeer ? 'Envoi...' : 'Demander sur Seer'}</span>
+                      </button>
+                    </div>
                   )}
                 </div>
               </div>

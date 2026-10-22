@@ -133,4 +133,5 @@ export function initDatabase() {
   console.log(`[Database] SQLite initialisée avec succès dans ${dbPath}`);
 }
 
+export { db };
 export default db;

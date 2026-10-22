@@ -42,22 +42,26 @@ export const Calendar: React.FC<CalendarProps> = ({
       if (filterType === 'watchlist') {
         if (user) {
           const wl = await api.getWatchlist();
-          // Filtrer les items avec une date de sortie
           const upcomingWl = wl
+            .map((item) => {
+              const epAirDate = item.next_episode_to_air?.air_date;
+              const effectiveDate = (item.media_type === 'tv' && epAirDate) ? epAirDate : item.release_date;
+              return {
+                id: item.tmdb_id,
+                media_type: item.media_type,
+                title: item.title,
+                overview: item.overview || '',
+                poster_path: item.poster_path,
+                backdrop_path: item.backdrop_path,
+                release_date: effectiveDate || undefined,
+                vote_average: 0,
+                vote_count: 0,
+                genres: item.genres,
+                inWatchlist: true,
+                next_episode_to_air: item.next_episode_to_air,
+              };
+            })
             .filter((item) => item.release_date)
-            .map((item) => ({
-              id: item.tmdb_id,
-              media_type: item.media_type,
-              title: item.title,
-              overview: item.overview || '',
-              poster_path: item.poster_path,
-              backdrop_path: item.backdrop_path,
-              release_date: item.release_date || undefined,
-              vote_average: 0,
-              vote_count: 0,
-              genres: item.genres,
-              inWatchlist: true,
-            }))
             .sort((a, b) => (a.release_date || '').localeCompare(b.release_date || ''));
           setItems(upcomingWl);
         } else {
@@ -81,6 +85,7 @@ export const Calendar: React.FC<CalendarProps> = ({
   const in14DaysStr = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
   const endOfMonthStr = new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString().split('T')[0];
 
+  const past: MediaItem[] = [];
   const thisWeek: MediaItem[] = [];
   const nextWeek: MediaItem[] = [];
   const thisMonth: MediaItem[] = [];
@@ -90,6 +95,8 @@ export const Calendar: React.FC<CalendarProps> = ({
     const d = it.release_date || '';
     if (!d) {
       later.push(it);
+    } else if (d < todayStr) {
+      past.push(it);
     } else if (d <= in7DaysStr) {
       thisWeek.push(it);
     } else if (d <= in14DaysStr) {
@@ -106,6 +113,9 @@ export const Calendar: React.FC<CalendarProps> = ({
     { title: '📅 La semaine prochaine', items: nextWeek, color: 'text-sky-400' },
     { title: '🗓️ Ce mois-ci', items: thisMonth, color: 'text-indigo-400' },
     { title: '⏳ Prochainement (Mois suivants)', items: later, color: 'text-slate-300' },
+    ...(filterType === 'watchlist' && past.length > 0
+      ? [{ title: '✅ Déjà disponibles / Sorties passées', items: past, color: 'text-emerald-400' }]
+      : []),
   ].filter((s) => s.items.length > 0);
 
   const getCountdownText = (releaseDate?: string) => {
@@ -115,8 +125,8 @@ export const Calendar: React.FC<CalendarProps> = ({
     const target = new Date(releaseDate);
     target.setHours(0, 0, 0, 0);
     const diffDays = Math.round((target.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+    if (diffDays < 0) return 'Disponible';
     if (diffDays === 0) return "Aujourd'hui !";
-    if (diffDays < 0) return 'Cette semaine';
     if (diffDays === 1) return 'Demain';
     return `Dans ${diffDays} jours`;
   };
@@ -263,6 +273,11 @@ export const Calendar: React.FC<CalendarProps> = ({
                           }`}>
                             {isAnime ? 'Animé' : isMovie ? 'Film' : 'Série'}
                           </span>
+                          {item.next_episode_to_air && (
+                            <span className="text-[10px] font-extrabold text-sky-300 bg-sky-500/15 px-1.5 py-0.2 rounded border border-sky-500/30">
+                              S{String(item.next_episode_to_air.season_number).padStart(2, '0')}E{String(item.next_episode_to_air.episode_number).padStart(2, '0')}
+                            </span>
+                          )}
                           {countdown && (
                             <span className="text-[10px] font-bold text-amber-400 bg-amber-500/10 px-1.5 py-0.2 rounded border border-amber-500/20">
                               {countdown}
@@ -274,11 +289,15 @@ export const Calendar: React.FC<CalendarProps> = ({
                           {item.title}
                         </h3>
 
-                        {item.genres && item.genres.length > 0 && (
+                        {item.next_episode_to_air?.name ? (
+                          <p className="text-[11px] text-sky-300/80 truncate mt-0.5 font-medium">
+                            {item.next_episode_to_air.name}
+                          </p>
+                        ) : item.genres && item.genres.length > 0 ? (
                           <p className="text-[11px] text-slate-400 truncate mt-0.5">
                             {item.genres.slice(0, 2).map((g) => g.name).join(' • ')}
                           </p>
-                        )}
+                        ) : null}
                       </div>
 
                       <ChevronRight className="w-4 h-4 text-slate-500 group-hover:text-primary-400 group-hover:translate-x-0.5 transition-all shrink-0" />

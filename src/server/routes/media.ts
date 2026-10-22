@@ -243,11 +243,28 @@ router.get('/watchlist', (req: AuthenticatedRequest, res: Response) => {
 
     const stmt = db.prepare(sql);
     const items = stmt.all(...params) as any[];
+    const cacheStmt = db.prepare('SELECT data FROM media_cache WHERE tmdb_id = ? AND media_type = ?');
 
-    const parsed = items.map((item) => ({
-      ...item,
-      genres: item.genres ? JSON.parse(item.genres) : [],
-    }));
+    const parsed = items.map((item) => {
+      let nextEp: any = undefined;
+      if (item.media_type === 'tv' && item.tmdb_id) {
+        try {
+          const cached = cacheStmt.get(item.tmdb_id, 'tv') as any;
+          if (cached?.data) {
+            const parsedCache = JSON.parse(cached.data);
+            if (parsedCache.next_episode_to_air) {
+              nextEp = parsedCache.next_episode_to_air;
+            }
+          }
+        } catch {}
+      }
+
+      return {
+        ...item,
+        genres: item.genres ? JSON.parse(item.genres) : [],
+        next_episode_to_air: nextEp,
+      };
+    });
 
     res.json(parsed);
   } catch (err: any) {
@@ -277,7 +294,7 @@ router.get('/stats', (req: AuthenticatedRequest, res: Response) => {
     const watchlistCount = watchlistItems.length;
 
     // Statements pour auto-enrichir le réalisateur depuis media_cache si absent
-    const getDirectorStmt = db.prepare('SELECT data FROM media_cache WHERE tmdb_id = ? AND media_type = "movie"');
+    const getDirectorStmt = db.prepare('SELECT data FROM media_cache WHERE tmdb_id = ? AND media_type = ?');
     const updateDirectorStmt = db.prepare('UPDATE watched_items SET director = ? WHERE id = ?');
 
     // Compteurs et accumulateurs
@@ -354,7 +371,7 @@ router.get('/stats', (req: AuthenticatedRequest, res: Response) => {
         let dirName = item.director;
         if (!dirName && item.tmdb_id) {
           try {
-            const cached = getDirectorStmt.get(item.tmdb_id) as any;
+            const cached = getDirectorStmt.get(item.tmdb_id, 'movie') as any;
             if (cached && cached.data) {
               const parsed = JSON.parse(cached.data);
               dirName = parsed.director || parsed.credits?.crew?.find((c: any) => c.job === 'Director')?.name;

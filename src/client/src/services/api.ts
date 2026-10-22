@@ -183,11 +183,24 @@ export const api = {
     request<{ success: boolean; message: string }>(`/seer/request/${requestId}`, {
       method: 'DELETE',
     }),
+  approveSeerRequest: (requestId: number) =>
+    request<{ success: boolean; message: string; result?: any }>(`/seer/request/${requestId}/approve`, {
+      method: 'POST',
+    }),
+  declineSeerRequest: (requestId: number) =>
+    request<{ success: boolean; message: string; result?: any }>(`/seer/request/${requestId}/decline`, {
+      method: 'POST',
+    }),
 
   // ==================== SONARR & RADARR ====================
   getArrStatus: () => request<{ sonarr: any; radarr: any }>('/sonarr/status'),
   checkSonarrSeries: (title: string) => request<ArrStatus>(`/sonarr/check/series?title=${encodeURIComponent(title)}`),
   checkRadarrMovie: (tmdbId: number) => request<ArrStatus>(`/sonarr/check/movie/${tmdbId}`),
+  syncSonarrUnmonitored: () =>
+    request<{ success: boolean; importedShows: number; importedAnime: number; totalImported: number; titles: string[]; message: string }>(
+      '/sonarr/sync-unmonitored',
+      { method: 'POST' }
+    ),
 
   // ==================== SIMKL ====================
   initSimklOAuth: (payload: { clientId?: string; clientSecret?: string; redirectUri: string }) =>

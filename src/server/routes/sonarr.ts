@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { ArrService } from '../services/sonarrService.js';
+import { authenticateToken, AuthenticatedRequest } from '../middleware/auth.js';
 
 const router = Router();
 
@@ -45,6 +46,17 @@ router.get('/check/movie/:tmdbId', async (req, res) => {
     const tmdbId = parseInt(req.params.tmdbId, 10);
     const status = await ArrService.checkRadarrMovie(tmdbId);
     res.json(status);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Synchroniser les séries et animés non monitorés de Sonarr dans "Déjà Vu"
+router.post('/sync-unmonitored', authenticateToken, async (req: AuthenticatedRequest, res) => {
+  try {
+    const userId = req.user!.id;
+    const result = await ArrService.syncUnmonitoredFromSonarr(userId);
+    res.json(result);
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }

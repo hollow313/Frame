@@ -80,6 +80,7 @@ export const WatchedHistory: React.FC<WatchedHistoryProps> = ({
   const [stats, setStats] = useState<UserStats | null>(null);
   const [loadingStats, setLoadingStats] = useState<boolean>(true);
   const [generatingShare, setGeneratingShare] = useState<boolean>(false);
+  const [syncingSonarr, setSyncingSonarr] = useState<boolean>(false);
 
   // Stats View Controls (Heatmap filter, Genres toggle, Recaps tabs)
   const [heatmapFilter, setHeatmapFilter] = useState<'all' | 'tv' | 'anime' | 'movie'>('all');
@@ -87,6 +88,20 @@ export const WatchedHistory: React.FC<WatchedHistoryProps> = ({
   const [monthTab, setMonthTab] = useState<'last' | 'this'>('last');
   const [weekTab, setWeekTab] = useState<'last' | 'this'>('last');
   const [hoveredDay, setHoveredDay] = useState<DayActivity | null>(null);
+
+  const handleSyncSonarr = async () => {
+    setSyncingSonarr(true);
+    try {
+      const res = await api.syncSonarrUnmonitored();
+      alert(res.message || `${res.totalImported} séries et mangas importés depuis Sonarr !`);
+      await loadWatched();
+      await loadStats();
+    } catch (err: any) {
+      alert(err.message || 'Erreur lors de la synchronisation Sonarr');
+    } finally {
+      setSyncingSonarr(false);
+    }
+  };
 
   useEffect(() => {
     loadWatched();
@@ -437,21 +452,37 @@ export const WatchedHistory: React.FC<WatchedHistoryProps> = ({
                 <span className="text-xs text-slate-400 font-semibold">• All time in review</span>
               </div>
               <h2 className="text-xl sm:text-2xl font-black text-white flex items-center gap-2 tracking-tight">
-                <span>Près de 3 mois de visionnage cumulé.</span>
+                <span>
+                  {stats?.totalDays 
+                    ? `Près de ${Math.max(1, Math.round(stats.totalDays / 30))} mois (${stats.totalDays} jours) de visionnage cumulé.`
+                    : 'Bilan complet de votre temps de visionnage.'}
+                </span>
               </h2>
               <p className="text-xs text-slate-400 mt-1">
                 Chaque série, chaque animé, chaque film et session de visionnage synchronisée.
               </p>
             </div>
 
-            <button
-              onClick={handleShareStats}
-              disabled={generatingShare || !stats}
-              className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-gradient-to-r from-primary-600 to-indigo-600 hover:from-primary-500 hover:to-indigo-500 text-white text-xs font-bold shadow-glow transition-all hover:scale-105 disabled:opacity-50"
-            >
-              <Download className="w-4 h-4" />
-              <span>{generatingShare ? 'Génération...' : 'Partager mes statistiques (Image PNG)'}</span>
-            </button>
+            <div className="flex flex-wrap items-center gap-2.5">
+              <button
+                onClick={handleSyncSonarr}
+                disabled={syncingSonarr}
+                className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-dark-800 hover:bg-dark-750 text-slate-200 border border-white/10 text-xs font-bold transition-all hover:scale-105 disabled:opacity-50"
+                title="Importer les mangas et séries non monitorés de Sonarr dans Déjà Vu"
+              >
+                <RefreshCw className={`w-4 h-4 text-sky-400 ${syncingSonarr ? 'animate-spin' : ''}`} />
+                <span>{syncingSonarr ? 'Import Sonarr...' : 'Importer depuis Sonarr'}</span>
+              </button>
+
+              <button
+                onClick={handleShareStats}
+                disabled={generatingShare || !stats}
+                className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-gradient-to-r from-primary-600 to-indigo-600 hover:from-primary-500 hover:to-indigo-500 text-white text-xs font-bold shadow-glow transition-all hover:scale-105 disabled:opacity-50"
+              >
+                <Download className="w-4 h-4" />
+                <span>{generatingShare ? 'Génération...' : 'Partager mes statistiques (Image PNG)'}</span>
+              </button>
+            </div>
           </div>
 
           {loadingStats ? (
@@ -1442,7 +1473,32 @@ export const WatchedHistory: React.FC<WatchedHistoryProps> = ({
                 })()}
               </div>
             </>
-          ) : null}
+          ) : (
+            <div className="py-20 text-center space-y-4 bg-dark-900/40 rounded-3xl border border-white/5">
+              <BarChart3 className="w-12 h-12 text-slate-600 mx-auto" />
+              <p className="text-base font-semibold text-slate-300">
+                Impossible de charger vos statistiques ou historique vide.
+              </p>
+              <p className="text-xs text-slate-500 max-w-md mx-auto">
+                Assurez-vous d'avoir synchronisé votre compte Simkl ou vos médias vus dans Sonarr.
+              </p>
+              <div className="flex items-center justify-center gap-3 pt-2">
+                <button
+                  onClick={loadStats}
+                  className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold shadow-glow transition-all"
+                >
+                  Actualiser les statistiques
+                </button>
+                <button
+                  onClick={handleSyncSonarr}
+                  disabled={syncingSonarr}
+                  className="px-4 py-2 rounded-xl bg-dark-800 hover:bg-dark-750 text-slate-200 border border-white/10 text-xs font-bold transition-all"
+                >
+                  Importer depuis Sonarr
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       )}
 

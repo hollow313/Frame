@@ -40,6 +40,19 @@ export const Settings: React.FC = () => {
   const [defaultLanguage, setDefaultLanguage] = useState('fr-FR');
   const [simklClientId, setSimklClientId] = useState('');
   const [jellyfinUrl, setJellyfinUrl] = useState('');
+  const [syncingSonarr, setSyncingSonarr] = useState(false);
+
+  const handleSyncSonarrUnmonitored = async () => {
+    setSyncingSonarr(true);
+    try {
+      const res = await api.syncSonarrUnmonitored();
+      alert(res.message || `${res.totalImported} séries et animés importés depuis Sonarr !`);
+    } catch (err: any) {
+      alert(err.message || 'Erreur lors de la synchronisation Sonarr');
+    } finally {
+      setSyncingSonarr(false);
+    }
+  };
 
   // Form states for Admin Auth Settings
   const [allowRegistration, setAllowRegistration] = useState(false);
@@ -743,6 +756,21 @@ export const Settings: React.FC = () => {
                   {testResults.sonarr.message}
                 </p>
               )}
+
+              <div className="pt-2 border-t border-white/5">
+                <button
+                  type="button"
+                  onClick={handleSyncSonarrUnmonitored}
+                  disabled={syncingSonarr || !sonarrUrl || !sonarrApiKey}
+                  className="w-full flex items-center justify-center gap-2 py-2 px-3 rounded-xl bg-primary-600/20 hover:bg-primary-600/30 text-primary-300 border border-primary-500/30 text-xs font-bold transition-all disabled:opacity-50"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${syncingSonarr ? 'animate-spin' : ''}`} />
+                  <span>{syncingSonarr ? 'Import en cours...' : 'Importer les mangas & séries déjà vus de Sonarr'}</span>
+                </button>
+                <p className="text-[10px] text-slate-500 mt-1 text-center">
+                  Importe toutes les séries et animés non monitorés de Sonarr directement dans votre historique Déjà Vu.
+                </p>
+              </div>
             </div>
 
             <div className="p-5 rounded-2xl bg-dark-900 border border-white/5 space-y-3">

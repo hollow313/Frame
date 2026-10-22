@@ -11,7 +11,9 @@ import {
   Trash2, 
   Eye, 
   Calendar,
-  Star
+  Star,
+  Check,
+  X
 } from 'lucide-react';
 import { SeerRequest, MediaItem } from '../types';
 import { api } from '../services/api';
@@ -27,6 +29,7 @@ export const SeerRequests: React.FC<SeerRequestsProps> = ({ onSelectMedia, onNav
   const [filter, setFilter] = useState<'all' | 'processing' | 'available' | 'pending'>('all');
   const [loading, setLoading] = useState<boolean>(true);
   const [cancellingId, setCancellingId] = useState<number | null>(null);
+  const [processingId, setProcessingId] = useState<number | null>(null);
 
   useEffect(() => {
     loadRequests();
@@ -46,6 +49,38 @@ export const SeerRequests: React.FC<SeerRequestsProps> = ({ onSelectMedia, onNav
       console.error('Erreur chargement demandes Seer', err);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleApproveRequest = async (e: React.MouseEvent, requestId: number, title?: string) => {
+    e.stopPropagation();
+    if (!confirm(`Approuver la demande pour « ${title || 'ce média'} » ?\nCela lancera la recherche et le téléchargement via Sonarr/Radarr.`)) return;
+
+    setProcessingId(requestId);
+    try {
+      await api.approveSeerRequest(requestId);
+      alert(`Demande approuvée pour « ${title} » ! Téléchargement lancé.`);
+      loadRequests();
+    } catch (err: any) {
+      alert(err.message || 'Erreur lors de l\'approbation');
+    } finally {
+      setProcessingId(null);
+    }
+  };
+
+  const handleDeclineRequest = async (e: React.MouseEvent, requestId: number, title?: string) => {
+    e.stopPropagation();
+    if (!confirm(`Refuser la demande pour « ${title || 'ce média'} » ?`)) return;
+
+    setProcessingId(requestId);
+    try {
+      await api.declineSeerRequest(requestId);
+      alert(`Demande refusée pour « ${title} ».`);
+      loadRequests();
+    } catch (err: any) {
+      alert(err.message || 'Erreur lors du refus');
+    } finally {
+      setProcessingId(null);
     }
   };
 
@@ -257,7 +292,34 @@ export const SeerRequests: React.FC<SeerRequestsProps> = ({ onSelectMedia, onNav
                 <div className="flex sm:flex-col items-center sm:items-end justify-between sm:justify-center w-full sm:w-auto shrink-0 gap-2.5 pt-2 sm:pt-0 border-t sm:border-t-0 border-white/5">
                   <div>{getStatusBadge(statusNumber)}</div>
 
-                  <div className="flex items-center gap-2">
+                  <div className="flex flex-wrap items-center gap-2">
+                    {/* Actions d'approbation pour les demandes en attente */}
+                    {statusNumber === 2 && (
+                      <>
+                        <button
+                          type="button"
+                          onClick={(e) => handleApproveRequest(e, req.id, displayTitle)}
+                          disabled={processingId === req.id}
+                          className="flex items-center gap-1 px-3 py-1 rounded-lg bg-emerald-500/20 hover:bg-emerald-500/35 text-emerald-300 border border-emerald-500/30 text-xs font-bold transition-all hover:scale-105 disabled:opacity-50 shadow-sm"
+                          title="Approuver la demande et lancer le téléchargement Sonarr / Radarr"
+                        >
+                          <Check className="w-3.5 h-3.5" />
+                          <span>{processingId === req.id ? 'Approbation...' : 'Approuver'}</span>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={(e) => handleDeclineRequest(e, req.id, displayTitle)}
+                          disabled={processingId === req.id}
+                          className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-amber-500/15 hover:bg-amber-500/30 text-amber-300 border border-amber-500/25 text-xs font-semibold transition-all disabled:opacity-50"
+                          title="Refuser cette demande"
+                        >
+                          <X className="w-3.5 h-3.5" />
+                          <span>Refuser</span>
+                        </button>
+                      </>
+                    )}
+
                     <button
                       type="button"
                       className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-dark-800 hover:bg-dark-750 text-slate-300 text-xs font-medium border border-white/5 transition-colors"

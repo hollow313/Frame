@@ -37,6 +37,21 @@ export interface MediaItem {
   director?: string | null;
   streaming_providers?: StreamingProvider[];
   buy_providers?: StreamingProvider[];
+  next_episode_to_air?: {
+    id: number;
+    name: string;
+    air_date: string;
+    episode_number: number;
+    season_number: number;
+    overview?: string;
+  };
+  last_episode_to_air?: {
+    id: number;
+    name: string;
+    air_date: string;
+    episode_number: number;
+    season_number: number;
+  };
   isWatched?: boolean;
   watched_at?: string | null;
   userRating?: number | null;
@@ -99,6 +114,14 @@ export interface WatchlistItem {
   overview: string | null;
   status: string;
   added_at: string;
+  next_episode_to_air?: {
+    id: number;
+    name: string;
+    air_date: string;
+    episode_number: number;
+    season_number: number;
+    overview?: string;
+  };
 }
 
 export interface RecommendationSection {
