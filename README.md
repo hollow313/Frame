@@ -41,7 +41,7 @@
 Frame est spécialement conçu pour tourner dans un conteneur Linux allégé Alpine sur votre serveur, avec prise en charge native du montage de dossiers (bind mounts) et exécution sous l'utilisateur **UID 568** / **GID 568**.
 
 ### Port par défaut
-Le service écoute sur le port **`30017`**.
+Le service écoute sur le port **`30018`**.
 
 ### 1. Avec Docker Compose (Recommandé)
 
@@ -54,12 +54,12 @@ services:
     container_name: frame
     restart: unless-stopped
     ports:
-      - "30017:30017"
+      - "30018:30018"
     environment:
       - PUID=568
       - PGID=568
       - TZ=Europe/Paris
-      - PORT=30017
+      - PORT=30018
       - NODE_ENV=production
       # Les variables suivantes sont optionnelles ici car configurables via l'interface web :
       # - TMDB_API_KEY=votre_cle_tmdb
@@ -87,7 +87,7 @@ docker compose up -d
 docker run -d \
   --name frame \
   --restart unless-stopped \
-  -p 30017:30017 \
+  -p 30018:30018 \
   -e PUID=568 \
   -e PGID=568 \
   -e TZ=Europe/Paris \
@@ -97,7 +97,7 @@ docker run -d \
 ```
 
 Accédez ensuite à l'application depuis votre navigateur :
-`http://<IP_DU_SERVEUR>:30017`
+`http://<IP_DU_SERVEUR>:30018`
 
 ---
 
@@ -150,7 +150,7 @@ npm run dev
 # Compiler pour la production
 npm run build
 
-# Démarrer le serveur de production (port 30017)
+# Démarrer le serveur de production (port 30018)
 npm start
 ```
 

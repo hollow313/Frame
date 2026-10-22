@@ -15,7 +15,7 @@ FROM node:22-alpine AS runner
 WORKDIR /app
 
 ENV NODE_ENV=production
-ENV PORT=30017
+ENV PORT=30018
 ENV PUID=568
 ENV PGID=568
 
@@ -40,7 +40,7 @@ RUN mkdir -p /app/data /app/config && \
 
 VOLUME ["/app/data", "/app/config"]
 
-EXPOSE 30017
+EXPOSE 30018
 
 ENTRYPOINT ["./docker-entrypoint.sh"]
 CMD ["node", "dist/server/index.js"]

@@ -6,12 +6,12 @@ services:
     container_name: frame
     restart: unless-stopped
     ports:
-      - "30017:30017"
+      - "30018:30018"
     environment:
       - PUID=568
       - PGID=568
       - TZ=Europe/Paris
-      - PORT=30017
+      - PORT=30018
       - NODE_ENV=production
       # Les variables suivantes peuvent être configurées ici ou via l'interface d'administration :
       # - TMDB_API_KEY=votre_cle_api_tmdb

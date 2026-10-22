@@ -27,7 +27,7 @@ const __dirname = path.dirname(__filename);
 initDatabase();
 
 const app = express();
-const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 30017;
+const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 30018;
 
 app.use(cors({
   origin: true,
