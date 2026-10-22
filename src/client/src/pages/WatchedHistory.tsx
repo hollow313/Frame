@@ -14,11 +14,19 @@ import {
   Share2, 
   Flame, 
   Bookmark, 
-  Download,
-  Check,
-  TrendingUp
+  Download, 
+  Check, 
+  TrendingUp,
+  Trophy,
+  ArrowUpRight,
+  Play,
+  Eye,
+  Clapperboard,
+  Hourglass,
+  Award,
+  ChevronRight
 } from 'lucide-react';
-import { WatchedItem, MediaItem, UserStats } from '../types';
+import { WatchedItem, MediaItem, UserStats, DayActivity } from '../types';
 import { api } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 
@@ -27,6 +35,30 @@ interface WatchedHistoryProps {
   onOpenRating: (item: MediaItem) => void;
   onNavigateTab: (tab: string) => void;
 }
+
+// Composant Sparkline SVG ultra-léger et élégant
+const Sparkline: React.FC<{ data?: number[]; color: string; height?: number }> = ({ data = [], color, height = 30 }) => {
+  if (!data || data.length === 0) return null;
+  const max = Math.max(...data, 1);
+  const min = Math.min(...data, 0);
+  const range = max - min || 1;
+  const width = 160;
+  const step = width / Math.max(1, data.length - 1);
+  const points = data.map((val, i) => {
+    const x = i * step;
+    const y = height - ((val - min) / range) * (height - 8) - 4;
+    return `${x.toFixed(1)},${y.toFixed(1)}`;
+  });
+  const pathD = `M ${points.join(' L ')}`;
+
+  return (
+    <div className="flex items-center">
+      <svg width={width} height={height} className="overflow-visible">
+        <path d={pathD} fill="none" stroke={color} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+    </div>
+  );
+};
 
 export const WatchedHistory: React.FC<WatchedHistoryProps> = ({
   onSelectMedia,
@@ -48,6 +80,13 @@ export const WatchedHistory: React.FC<WatchedHistoryProps> = ({
   const [stats, setStats] = useState<UserStats | null>(null);
   const [loadingStats, setLoadingStats] = useState<boolean>(true);
   const [generatingShare, setGeneratingShare] = useState<boolean>(false);
+
+  // Stats View Controls (Heatmap filter, Genres toggle, Recaps tabs)
+  const [heatmapFilter, setHeatmapFilter] = useState<'all' | 'tv' | 'anime' | 'movie'>('all');
+  const [genreSortBy, setGenreSortBy] = useState<'items' | 'time'>('items');
+  const [monthTab, setMonthTab] = useState<'last' | 'this'>('last');
+  const [weekTab, setWeekTab] = useState<'last' | 'this'>('last');
+  const [hoveredDay, setHoveredDay] = useState<DayActivity | null>(null);
 
   useEffect(() => {
     loadWatched();
@@ -173,12 +212,15 @@ export const WatchedHistory: React.FC<WatchedHistoryProps> = ({
       const cardWidth = 335;
       const spacing = 35;
 
-      // Carte 1: Temps Total
-      drawCard(ctx, 60, cardY, cardWidth, cardHeight, 'TEMPS TOTAL PASSÉ', `${stats.totalHours} heures`, [
-        `🎬 Films : ${stats.moviesHours}h`,
-        `📺 Séries : ${stats.tvHours}h`,
-        `✨ Mangas : ${stats.animeHours}h`,
-      ], '#6366f1');
+      // Carte 1: Temps Total Simkl
+      const totalDisplay = (stats.totalDays && stats.totalDays > 0)
+        ? `${stats.totalDays}j ${stats.remainingHours || 0}h ${stats.remainingMinutes || 0}m`
+        : `${stats.totalHours} heures`;
+      drawCard(ctx, 60, cardY, cardWidth, cardHeight, 'TEMPS TOTAL CUMULÉ', totalDisplay, [
+        `📺 Séries : ${stats.tvStats?.days ? `${stats.tvStats.days}j ` : ''}${stats.tvStats?.hours ?? stats.tvHours}h`,
+        `✨ Animés : ${stats.animeStats?.days ? `${stats.animeStats.days}j ` : ''}${stats.animeStats?.hours ?? stats.animeHours}h`,
+        `🎬 Films : ${stats.movieStats?.days ? `${stats.movieStats.days}j ` : ''}${stats.movieStats?.hours ?? stats.moviesHours}h`,
+      ], '#10b981');
 
       // Carte 2: Cette Année (2026)
       drawCard(ctx, 60 + cardWidth + spacing, cardY, cardWidth, cardHeight, `CETTE ANNÉE (${stats.currentYear || 2026})`, `${stats.thisYearTotalHours || 0} heures`, [
@@ -381,26 +423,31 @@ export const WatchedHistory: React.FC<WatchedHistoryProps> = ({
       </div>
 
       {/* ========================================================================= */}
-      {/* VUE 1 : STATISTIQUES & BILAN DÉTAILLÉ                                     */}
+      {/* VUE 1 : STATISTIQUES & BILAN DÉTAILLÉ (STYLE SIMKL OFFICIEL)              */}
       {/* ========================================================================= */}
       {activeView === 'stats' && (
-        <div className="space-y-6 animate-in fade-in duration-200">
-          {/* Action Bar: Bouton Partager */}
-          <div className="flex flex-wrap items-center justify-between gap-4 p-4 rounded-2xl bg-gradient-to-r from-dark-900 via-dark-850 to-primary-950/30 border border-white/5">
+        <div className="space-y-8 animate-in fade-in duration-200">
+          {/* Action Bar & En-tête All Time */}
+          <div className="flex flex-wrap items-center justify-between gap-4 p-5 rounded-2xl bg-gradient-to-r from-dark-900 via-dark-850 to-primary-950/30 border border-white/5">
             <div>
-              <h2 className="text-sm font-bold text-white flex items-center gap-2">
-                <Sparkles className="w-4 h-4 text-primary-400" />
-                <span>Votre Récapitulatif Visionnage</span>
+              <div className="flex items-center gap-2 mb-1">
+                <span className="px-2 py-0.5 rounded-md bg-emerald-500/15 border border-emerald-500/30 text-[10px] font-extrabold uppercase tracking-wider text-emerald-400">
+                  STATISTIQUES SIMKL & FRAME
+                </span>
+                <span className="text-xs text-slate-400 font-semibold">• All time in review</span>
+              </div>
+              <h2 className="text-xl sm:text-2xl font-black text-white flex items-center gap-2 tracking-tight">
+                <span>Près de 3 mois de visionnage cumulé.</span>
               </h2>
-              <p className="text-xs text-slate-400 mt-0.5">
-                Statistiques calculées à partir de vos œuvres marquées comme vues et synchronisées via Simkl & Jellyfin.
+              <p className="text-xs text-slate-400 mt-1">
+                Chaque série, chaque animé, chaque film et session de visionnage synchronisée.
               </p>
             </div>
 
             <button
               onClick={handleShareStats}
               disabled={generatingShare || !stats}
-              className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-gradient-to-r from-primary-600 to-indigo-600 hover:from-primary-500 hover:to-indigo-500 text-white text-xs font-bold shadow-glow transition-all hover:scale-105 disabled:opacity-50"
+              className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-gradient-to-r from-primary-600 to-indigo-600 hover:from-primary-500 hover:to-indigo-500 text-white text-xs font-bold shadow-glow transition-all hover:scale-105 disabled:opacity-50"
             >
               <Download className="w-4 h-4" />
               <span>{generatingShare ? 'Génération...' : 'Partager mes statistiques (Image PNG)'}</span>
@@ -413,172 +460,986 @@ export const WatchedHistory: React.FC<WatchedHistoryProps> = ({
             </div>
           ) : stats ? (
             <>
-              {/* 4 Grandes Cartes KPIs */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-                {/* KPI 1 : Temps Total */}
-                <div className="p-5 rounded-2xl bg-dark-900 border border-white/5 relative overflow-hidden group">
-                  <div className="flex items-center justify-between text-slate-400 mb-2">
-                    <span className="text-xs font-bold uppercase tracking-wider">Temps Total de Visionnage</span>
-                    <Clock className="w-4 h-4 text-primary-400" />
-                  </div>
-                  <div className="text-3xl font-extrabold text-white tracking-tight">
-                    {stats.totalHours} <span className="text-lg font-medium text-slate-400">heures</span>
-                  </div>
-                  <div className="mt-3 pt-3 border-t border-white/5 text-xs text-slate-400 space-y-1">
-                    <div className="flex justify-between">
-                      <span>🎬 Films ({stats.moviesWatched}) :</span>
-                      <strong className="text-slate-200">{stats.moviesHours}h</strong>
+              {/* ================================================================= */}
+              {/* SECTION 1 : HERO CARTE TEMPS TOTAL (SPENT) + GRILLE KPIS          */}
+              {/* ================================================================= */}
+              <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-stretch">
+                {/* Carte Principale SPENT (Gauche) */}
+                <div className="lg:col-span-5 p-6 sm:p-8 rounded-3xl bg-dark-900 border border-white/5 flex flex-col justify-between relative overflow-hidden group">
+                  <div className="absolute top-0 right-0 -mr-16 -mt-16 w-48 h-48 rounded-full bg-emerald-500/10 blur-3xl pointer-events-none" />
+                  
+                  <div>
+                    <span className="text-emerald-400 font-black tracking-widest text-lg sm:text-2xl block uppercase">
+                      SPENT
+                    </span>
+                    <span className="text-slate-400 text-xs font-bold uppercase tracking-wider block mt-1">
+                      WATCHING TV SHOWS, ANIME & MOVIES
+                    </span>
+
+                    {/* Grands Chiffres Jours : Heures : Minutes */}
+                    <div className="flex items-baseline gap-2 sm:gap-4 my-6">
+                      <div className="text-center">
+                        <span className="text-5xl sm:text-6xl font-black text-white tracking-tight">
+                          {stats.totalDays}
+                        </span>
+                        <span className="text-[11px] sm:text-xs font-extrabold text-slate-400 uppercase tracking-widest block mt-1">
+                          JOURS
+                        </span>
+                      </div>
+                      <span className="text-3xl sm:text-5xl font-black text-slate-600 pb-4">:</span>
+                      <div className="text-center">
+                        <span className="text-5xl sm:text-6xl font-black text-white tracking-tight">
+                          {stats.remainingHours}
+                        </span>
+                        <span className="text-[11px] sm:text-xs font-extrabold text-slate-400 uppercase tracking-widest block mt-1">
+                          HEURES
+                        </span>
+                      </div>
+                      <span className="text-3xl sm:text-5xl font-black text-slate-600 pb-4">:</span>
+                      <div className="text-center">
+                        <span className="text-5xl sm:text-6xl font-black text-white tracking-tight">
+                          {stats.remainingMinutes}
+                        </span>
+                        <span className="text-[11px] sm:text-xs font-extrabold text-slate-400 uppercase tracking-widest block mt-1">
+                          MINUTES
+                        </span>
+                      </div>
                     </div>
-                    <div className="flex justify-between">
-                      <span>📺 Séries ({stats.tvWatched}) :</span>
-                      <strong className="text-slate-200">{stats.tvHours}h</strong>
+                  </div>
+
+                  <div className="pt-4 border-t border-white/5 flex items-center justify-between text-xs text-slate-400">
+                    <span className="flex items-center gap-1.5">
+                      <Clock className="w-3.5 h-3.5 text-emerald-400" />
+                      <span>{stats.totalMinutes?.toLocaleString()} minutes réelles</span>
+                    </span>
+                    <span className="font-semibold text-slate-300">
+                      ≈ {stats.totalHours?.toLocaleString()}h cumulées
+                    </span>
+                  </div>
+                </div>
+
+                {/* Grille 3x3 des 9 Métriques Clés (Droite) */}
+                <div className="lg:col-span-7 grid grid-cols-2 sm:grid-cols-3 gap-3 p-4 rounded-3xl bg-dark-900 border border-white/5">
+                  {/* KPI 1 : Titres suivis */}
+                  <div className="p-3.5 rounded-2xl bg-dark-850/70 border border-white/5 flex flex-col justify-between">
+                    <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400">
+                      TITRES SUIVIS
+                    </span>
+                    <div className="my-1.5">
+                      <span className="text-2xl font-black text-white">{stats.titlesTracked}</span>
                     </div>
-                    <div className="flex justify-between">
-                      <span>✨ Mangas & Animés ({stats.animeWatched}) :</span>
-                      <strong className="text-amber-300">{stats.animeHours}h</strong>
+                    <span className="text-[11px] text-slate-400">
+                      {stats.completedTitles} terminés • {stats.completionRate}%
+                    </span>
+                  </div>
+
+                  {/* KPI 2 : Épisodes vus */}
+                  <div className="p-3.5 rounded-2xl bg-dark-850/70 border border-white/5 flex flex-col justify-between">
+                    <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400">
+                      ÉPISODES
+                    </span>
+                    <div className="my-1.5">
+                      <span className="text-2xl font-black text-white">{stats.totalEpisodes?.toLocaleString()}</span>
+                    </div>
+                    <span className="text-[11px] text-slate-400">
+                      {stats.finishedEpisodes?.toLocaleString()} finis • {stats.inProgressEpisodes?.toLocaleString()} en cours
+                    </span>
+                  </div>
+
+                  {/* KPI 3 : Note Moyenne */}
+                  <div className="p-3.5 rounded-2xl bg-dark-850/70 border border-white/5 flex flex-col justify-between">
+                    <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400">
+                      NOTE MOYENNE
+                    </span>
+                    <div className="my-1.5 flex items-baseline gap-1">
+                      <span className="text-2xl font-black text-amber-400">
+                        {stats.averageRating ? stats.averageRating : '—'}
+                      </span>
+                      {stats.averageRating && <span className="text-xs text-slate-400 font-semibold">/ 10</span>}
+                    </div>
+                    <span className="text-[11px] text-slate-400">
+                      {stats.ratingCount ? `${stats.ratingCount} avis enregistrés` : 'aucun avis pour le moment'}
+                    </span>
+                  </div>
+
+                  {/* KPI 4 : Année Record */}
+                  <div className="p-3.5 rounded-2xl bg-dark-850/70 border border-white/5 flex flex-col justify-between">
+                    <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400">
+                      ANNÉE RECORD
+                    </span>
+                    <div className="my-1.5">
+                      <span className="text-2xl font-black text-amber-300">{stats.peakYear}</span>
+                    </div>
+                    <span className="text-[11px] text-slate-400">
+                      {stats.peakYearHours?.toLocaleString()}h en {stats.peakYear}
+                    </span>
+                  </div>
+
+                  {/* KPI 5 : Jour de prédilection */}
+                  <div className="p-3.5 rounded-2xl bg-dark-850/70 border border-white/5 flex flex-col justify-between">
+                    <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400">
+                      JOUR FAVORI
+                    </span>
+                    <div className="my-1.5">
+                      <span className="text-2xl font-black text-amber-400">{stats.topWeekday}</span>
+                    </div>
+                    <span className="text-[11px] text-slate-400">
+                      {stats.topWeekdayAvgFormatted}
+                    </span>
+                  </div>
+
+                  {/* KPI 6 : Watch Streak Record */}
+                  <div className="p-3.5 rounded-2xl bg-dark-850/70 border border-white/5 flex flex-col justify-between">
+                    <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400">
+                      SÉRIE RECORD
+                    </span>
+                    <div className="my-1.5 flex items-baseline gap-1">
+                      <span className="text-2xl font-black text-white">{stats.longestStreak}</span>
+                      <span className="text-xs font-bold text-slate-400">jours</span>
+                    </div>
+                    <span className="text-[11px] text-slate-400">
+                      record consécutif sur l'année
+                    </span>
+                  </div>
+
+                  {/* KPI 7 : 30 Derniers Jours */}
+                  <div className="p-3.5 rounded-2xl bg-dark-850/70 border border-white/5 flex flex-col justify-between">
+                    <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400">
+                      30 DERNIERS JOURS
+                    </span>
+                    <div className="my-1.5 flex items-baseline gap-1">
+                      <span className="text-2xl font-black text-white">{stats.last30DaysHours}</span>
+                      <span className="text-xs font-bold text-slate-400">h</span>
+                    </div>
+                    <span className="text-[11px] text-slate-400">
+                      sur {stats.last30DaysActiveDays} jours d'activité
+                    </span>
+                  </div>
+
+                  {/* KPI 8 : Jours Actifs Cette Année */}
+                  <div className="p-3.5 rounded-2xl bg-dark-850/70 border border-white/5 flex flex-col justify-between">
+                    <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400">
+                      JOURS ACTIFS ({stats.currentYear || 2026})
+                    </span>
+                    <div className="my-1.5 flex items-baseline gap-1">
+                      <span className="text-2xl font-black text-emerald-400">{stats.watchDaysThisYear}</span>
+                      <span className="text-xs font-bold text-slate-400">/ {stats.daysPassedThisYear}</span>
+                    </div>
+                    <span className="text-[11px] text-slate-400">
+                      jours avec du visionnage
+                    </span>
+                  </div>
+
+                  {/* KPI 9 : Backlog (À Voir) */}
+                  <div className="p-3.5 rounded-2xl bg-dark-850/70 border border-white/5 flex flex-col justify-between">
+                    <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400">
+                      À VOIR (BACKLOG)
+                    </span>
+                    <div className="my-1.5 flex items-baseline gap-1">
+                      <span className="text-2xl font-black text-primary-400">{stats.backlogDays}</span>
+                      <span className="text-xs font-bold text-slate-400">jours</span>
+                    </div>
+                    <span className="text-[11px] text-slate-400">
+                      sur {stats.backlogTitlesCount} titres en liste
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {/* ================================================================= */}
+              {/* SECTION 2 : HEATMAP 365 JOURS ("One square, one day.")            */}
+              {/* ================================================================= */}
+              <div className="p-6 rounded-3xl bg-dark-900 border border-white/5 space-y-5">
+                <div className="flex flex-wrap items-center justify-between gap-4">
+                  <div>
+                    <span className="text-[10px] font-extrabold uppercase tracking-widest text-emerald-400 block mb-1">
+                      365 JOURS, CARTOGRAPHIÉS
+                    </span>
+                    <h3 className="text-xl font-black text-white flex items-center gap-2">
+                      <span>One <span className="text-emerald-400">square</span>, one day.</span>
+                    </h3>
+                    <p className="text-xs text-slate-400 mt-0.5">
+                      Vos 12 derniers mois de visionnage • Chaque session de lecture dans l'année.
+                    </p>
+                  </div>
+
+                  {/* Filtres de catégorie pour la heatmap */}
+                  <div className="flex items-center gap-1.5 p-1 bg-dark-850 rounded-xl border border-white/5 text-xs">
+                    {(['all', 'tv', 'anime', 'movie'] as const).map((mode) => (
+                      <button
+                        key={mode}
+                        onClick={() => setHeatmapFilter(mode)}
+                        className={`px-3 py-1.5 rounded-lg font-bold transition-all ${
+                          heatmapFilter === mode
+                            ? 'bg-emerald-600 text-white shadow-glow'
+                            : 'text-slate-400 hover:text-white'
+                        }`}
+                      >
+                        {mode === 'all' ? 'TOUT' : mode === 'tv' ? 'SÉRIES TV' : mode === 'anime' ? 'ANIMÉS' : 'FILMS'}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Résumé chiffré au-dessus de la grille */}
+                <div className="flex flex-wrap items-center justify-between gap-4 text-xs text-slate-400 pb-2 border-b border-white/5">
+                  <div className="flex items-center gap-3">
+                    <span className="font-bold text-slate-200">365 JOURS</span>
+                    <span>•</span>
+                    <span className="text-emerald-400 font-semibold">
+                      {stats.heatmap?.filter((d) => d.count > 0).length || 0} AVEC ACTIVITÉ
+                    </span>
+                    <span>•</span>
+                    <span>
+                      {stats.heatmap?.filter((d) => d.count === 0).length || 0} JOURS DE PAUSE
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Trophy className="w-3.5 h-3.5 text-amber-400" />
+                    <span>RECORD CONSÉCUTIF : <strong className="text-white">{stats.longestStreak} JOURS</strong></span>
+                  </div>
+                </div>
+
+                {/* Grille Heatmap : 7 lignes x 53 colonnes */}
+                <div className="overflow-x-auto pb-2">
+                  <div className="min-w-[760px]">
+                    <div className="grid grid-flow-col grid-rows-7 gap-1">
+                      {(stats.heatmap || []).map((day, idx) => {
+                        let cellLevel = day.level;
+                        if (heatmapFilter === 'tv') {
+                          cellLevel = day.tvMinutes > 240 ? 4 : day.tvMinutes > 120 ? 3 : day.tvMinutes > 45 ? 2 : day.tvMinutes > 0 ? 1 : 0;
+                        } else if (heatmapFilter === 'anime') {
+                          cellLevel = day.animeMinutes > 240 ? 4 : day.animeMinutes > 120 ? 3 : day.animeMinutes > 45 ? 2 : day.animeMinutes > 0 ? 1 : 0;
+                        } else if (heatmapFilter === 'movie') {
+                          cellLevel = day.movieMinutes > 240 ? 4 : day.movieMinutes > 120 ? 3 : day.movieMinutes > 45 ? 2 : day.movieMinutes > 0 ? 1 : 0;
+                        }
+
+                        const levelColors = [
+                          'bg-dark-800/80 border border-white/5',
+                          'bg-emerald-950 border border-emerald-800/40',
+                          'bg-emerald-700 border border-emerald-600/40',
+                          'bg-emerald-500 border border-emerald-400/50',
+                          'bg-emerald-400 shadow-sm shadow-emerald-400/50 border border-emerald-300',
+                        ];
+
+                        return (
+                          <div
+                            key={day.date || idx}
+                            onMouseEnter={() => setHoveredDay(day)}
+                            onMouseLeave={() => setHoveredDay(null)}
+                            className={`w-3.5 h-3.5 rounded-sm transition-all cursor-pointer hover:scale-125 ${levelColors[cellLevel]}`}
+                            title={`${day.date} : ${Math.floor(day.minutes / 60)}h ${day.minutes % 60}m (${day.count} œuvres)`}
+                          />
+                        );
+                      })}
                     </div>
                   </div>
                 </div>
 
-                {/* KPI 2 : Cette Année (2026) */}
-                <div className="p-5 rounded-2xl bg-dark-900 border border-emerald-500/20 relative overflow-hidden group">
-                  <div className="flex items-center justify-between text-emerald-400 mb-2">
-                    <span className="text-xs font-bold uppercase tracking-wider">Cette Année ({stats.currentYear || 2026})</span>
-                    <Flame className="w-4 h-4" />
+                {/* Légende & Détail au survol */}
+                <div className="flex flex-wrap items-center justify-between gap-4 pt-2 text-xs">
+                  <div className="text-slate-400 font-medium">
+                    {hoveredDay ? (
+                      <span className="text-emerald-300 font-semibold">
+                        📅 {new Date(hoveredDay.date).toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })} : {Math.floor(hoveredDay.minutes / 60)}h {hoveredDay.minutes % 60}m passées ({hoveredDay.count} visionnages)
+                      </span>
+                    ) : (
+                      <span>Survolez n'importe quelle case pour afficher les détails du jour.</span>
+                    )}
                   </div>
-                  <div className="text-3xl font-extrabold text-white tracking-tight">
-                    {stats.thisYearTotalHours || 0} <span className="text-lg font-medium text-slate-400">heures</span>
+
+                  <div className="flex items-center gap-2 text-slate-500 text-[11px]">
+                    <span>Calme</span>
+                    <div className="flex items-center gap-1">
+                      <div className="w-3 h-3 rounded-sm bg-dark-800 border border-white/5" />
+                      <div className="w-3 h-3 rounded-sm bg-emerald-950 border border-emerald-800/40" />
+                      <div className="w-3 h-3 rounded-sm bg-emerald-700" />
+                      <div className="w-3 h-3 rounded-sm bg-emerald-500" />
+                      <div className="w-3 h-3 rounded-sm bg-emerald-400" />
+                    </div>
+                    <span>Binge-watching</span>
                   </div>
-                  <div className="mt-3 pt-3 border-t border-white/5 text-xs text-slate-400 space-y-1">
-                    <div className="flex justify-between">
-                      <span>🎬 Films cette année :</span>
-                      <strong className="text-slate-200">{stats.thisYearMoviesHours || 0}h</strong>
+                </div>
+
+                {/* Carte Série en cours & Performance de la semaine */}
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-4 border-t border-white/5">
+                  {/* Streak Actuel */}
+                  <div className="p-4 rounded-2xl bg-dark-850/60 border border-white/5 flex items-center gap-4">
+                    <div className="w-12 h-12 rounded-full border-2 border-emerald-500/40 bg-emerald-500/10 flex items-center justify-center text-emerald-400">
+                      <Flame className="w-6 h-6 animate-pulse" />
                     </div>
-                    <div className="flex justify-between">
-                      <span>📺 Séries cette année :</span>
-                      <strong className="text-slate-200">{stats.thisYearTvHours || 0}h</strong>
+                    <div>
+                      <div className="flex items-baseline gap-1.5">
+                        <span className="text-2xl font-black text-white">{stats.currentStreak}</span>
+                        <span className="text-xs font-bold text-slate-400 uppercase">JOURS</span>
+                      </div>
+                      <span className="text-[11px] text-slate-400">Série en cours (Watch Streak)</span>
                     </div>
-                    <div className="flex justify-between">
-                      <span>✨ Mangas cette année :</span>
-                      <strong className="text-amber-300">{stats.thisYearAnimeHours || 0}h</strong>
+                  </div>
+
+                  {/* Activité Semaine Actuelle (Lun..Dim) */}
+                  <div className="p-4 rounded-2xl bg-dark-850/60 border border-white/5">
+                    <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400 block mb-2">
+                      ACTIVITÉ DE LA SEMAINE
+                    </span>
+                    <div className="flex items-center justify-between">
+                      {['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim'].map((name, i) => {
+                        const active = stats.weekStreakDays?.[i];
+                        return (
+                          <div key={name} className="flex flex-col items-center gap-1">
+                            <div
+                              className={`w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold ${
+                                active
+                                  ? 'bg-emerald-500 text-dark-950 shadow-sm shadow-emerald-500/50'
+                                  : 'border border-dashed border-slate-600 text-slate-500'
+                              }`}
+                            >
+                              {active ? <Check className="w-3.5 h-3.5 stroke-[3]" /> : '·'}
+                            </div>
+                            <span className="text-[10px] text-slate-400 font-medium">{name}</span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* Record Personnel */}
+                  <div className="p-4 rounded-2xl bg-dark-850/60 border border-white/5 flex flex-col justify-between">
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400">
+                        RECORD PERSONNEL
+                      </span>
+                      <span className="text-amber-400 font-bold flex items-center gap-1">
+                        <Trophy className="w-3 h-3" />
+                        <span>{stats.longestStreak} Jours</span>
+                      </span>
+                    </div>
+                    <div className="w-full h-2 rounded-full bg-dark-800 overflow-hidden my-2">
+                      <div
+                        className="h-full rounded-full bg-gradient-to-r from-emerald-500 to-amber-400"
+                        style={{
+                          width: `${Math.min(100, Math.round((stats.currentStreak / Math.max(1, stats.longestStreak)) * 100))}%`,
+                        }}
+                      />
+                    </div>
+                    <span className="text-[11px] text-slate-400">
+                      {Math.max(0, stats.longestStreak - stats.currentStreak)} jours restants pour battre votre record
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {/* ================================================================= */}
+              {/* SECTION 3 : LES 3 GRANDS PILIERS (SÉRIES TV, ANIMÉS, FILMS)       */}
+              {/* ================================================================= */}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                {/* PILIER 1 : SÉRIES TV (BLEU) */}
+                <div className="p-6 rounded-3xl bg-dark-900 border border-blue-500/20 relative overflow-hidden flex flex-col justify-between space-y-5">
+                  <div className="space-y-4">
+                    {/* En-tête Pilier */}
+                    <div className="flex items-center justify-between">
+                      <div className="w-12 h-12 rounded-2xl bg-blue-500/10 border border-blue-500/30 flex items-center justify-center text-blue-400 shadow-glow">
+                        <Tv className="w-6 h-6" />
+                      </div>
+                      <span className="px-2.5 py-1 rounded-full bg-blue-500/15 border border-blue-500/30 text-xs font-black text-blue-300">
+                        {stats.tvStats?.percentage || 0}% du total
+                      </span>
+                    </div>
+
+                    <div>
+                      <h4 className="text-sm font-black uppercase tracking-wider text-blue-400">
+                        WATCHED TV
+                      </h4>
+                      <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400 block mt-0.5">
+                        TOTAL SPENT WATCHING
+                      </span>
+
+                      {/* Grands Chiffres */}
+                      <div className="flex items-baseline gap-2 my-3">
+                        <div>
+                          <span className="text-3xl sm:text-4xl font-black text-white">{stats.tvStats?.days || 0}</span>
+                          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest block text-center">J</span>
+                        </div>
+                        <span className="text-xl font-bold text-slate-600">:</span>
+                        <div>
+                          <span className="text-3xl sm:text-4xl font-black text-white">{stats.tvStats?.hours || 0}</span>
+                          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest block text-center">H</span>
+                        </div>
+                        <span className="text-xl font-bold text-slate-600">:</span>
+                        <div>
+                          <span className="text-3xl sm:text-4xl font-black text-white">{stats.tvStats?.minutes || 0}</span>
+                          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest block text-center">M</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Sparkline des 90 jours */}
+                    <div className="py-2 border-t border-b border-white/5 space-y-1">
+                      <div className="flex items-center justify-between text-[10px] font-bold text-slate-400 uppercase">
+                        <span>Tendance 90 jours</span>
+                        <span>{stats.tvHours}h totales</span>
+                      </div>
+                      <div className="py-1">
+                        <Sparkline data={stats.tvStats?.sparkline} color="#3b82f6" height={36} />
+                      </div>
+                    </div>
+
+                    {/* Tableau Détails */}
+                    <div className="space-y-2 text-xs">
+                      <div className="flex items-center justify-between py-1 border-b border-white/5">
+                        <span className="text-slate-300 font-semibold">{stats.tvStats?.completedCount || 0} terminées</span>
+                        <span className="text-slate-400">{stats.tvStats?.totalEpisodes?.toLocaleString() || 0} épisodes</span>
+                      </div>
+                      <div className="flex items-center justify-between py-1 border-b border-white/5">
+                        <span className="text-slate-300 font-semibold">{stats.tvStats?.watchingCount || 0} en cours</span>
+                        <span className="text-slate-400">{stats.tvStats?.watchingEpisodes?.toLocaleString() || 0} épisodes vus</span>
+                      </div>
+                      <div className="flex items-center justify-between py-1">
+                        <span className="text-slate-300 font-semibold">{stats.tvStats?.planToWatchCount || 0} à voir</span>
+                        <span className="text-blue-300 font-semibold">dans votre watchlist</span>
+                      </div>
                     </div>
                   </div>
                 </div>
 
-                {/* KPI 3 : Œuvres Vues Totales */}
-                <div className="p-5 rounded-2xl bg-dark-900 border border-white/5 relative overflow-hidden group">
-                  <div className="flex items-center justify-between text-slate-400 mb-2">
-                    <span className="text-xs font-bold uppercase tracking-wider">Œuvres Visionnées</span>
-                    <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-                  </div>
-                  <div className="text-3xl font-extrabold text-white tracking-tight">
-                    {stats.totalWatched} <span className="text-lg font-medium text-slate-400">titres</span>
-                  </div>
-                  <div className="mt-3 pt-3 border-t border-white/5 text-xs text-slate-400 space-y-1">
-                    <div className="flex justify-between">
-                      <span>🎬 Longs-métrages :</span>
-                      <strong className="text-slate-200">{stats.moviesWatched}</strong>
+                {/* PILIER 2 : ANIMÉS & MANGAS (JAUNE / OR) */}
+                <div className="p-6 rounded-3xl bg-dark-900 border border-amber-500/20 relative overflow-hidden flex flex-col justify-between space-y-5">
+                  <div className="space-y-4">
+                    {/* En-tête Pilier */}
+                    <div className="flex items-center justify-between">
+                      <div className="w-12 h-12 rounded-2xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-400 shadow-glow">
+                        <Sparkles className="w-6 h-6" />
+                      </div>
+                      <span className="px-2.5 py-1 rounded-full bg-amber-500/15 border border-amber-500/30 text-xs font-black text-amber-300">
+                        {stats.animeStats?.percentage || 0}% du total
+                      </span>
                     </div>
-                    <div className="flex justify-between">
-                      <span>📺 Séries TV :</span>
-                      <strong className="text-slate-200">{stats.tvWatched}</strong>
+
+                    <div>
+                      <h4 className="text-sm font-black uppercase tracking-wider text-amber-400">
+                        WATCHED ANIME
+                      </h4>
+                      <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400 block mt-0.5">
+                        TOTAL SPENT WATCHING
+                      </span>
+
+                      {/* Grands Chiffres */}
+                      <div className="flex items-baseline gap-2 my-3">
+                        <div>
+                          <span className="text-3xl sm:text-4xl font-black text-white">{stats.animeStats?.days || 0}</span>
+                          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest block text-center">J</span>
+                        </div>
+                        <span className="text-xl font-bold text-slate-600">:</span>
+                        <div>
+                          <span className="text-3xl sm:text-4xl font-black text-white">{stats.animeStats?.hours || 0}</span>
+                          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest block text-center">H</span>
+                        </div>
+                        <span className="text-xl font-bold text-slate-600">:</span>
+                        <div>
+                          <span className="text-3xl sm:text-4xl font-black text-white">{stats.animeStats?.minutes || 0}</span>
+                          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest block text-center">M</span>
+                        </div>
+                      </div>
                     </div>
-                    <div className="flex justify-between">
-                      <span>✨ Mangas & Animés :</span>
-                      <strong className="text-amber-300">{stats.animeWatched}</strong>
+
+                    {/* Sparkline des 90 jours */}
+                    <div className="py-2 border-t border-b border-white/5 space-y-1">
+                      <div className="flex items-center justify-between text-[10px] font-bold text-slate-400 uppercase">
+                        <span>Tendance 90 jours</span>
+                        <span>{stats.animeHours}h totales</span>
+                      </div>
+                      <div className="py-1">
+                        <Sparkline data={stats.animeStats?.sparkline} color="#eab308" height={36} />
+                      </div>
+                    </div>
+
+                    {/* Tableau Détails */}
+                    <div className="space-y-2 text-xs">
+                      <div className="flex items-center justify-between py-1 border-b border-white/5">
+                        <span className="text-slate-300 font-semibold">{stats.animeStats?.completedCount || 0} terminés</span>
+                        <span className="text-slate-400">{stats.animeStats?.totalEpisodes?.toLocaleString() || 0} épisodes</span>
+                      </div>
+                      <div className="flex items-center justify-between py-1 border-b border-white/5">
+                        <span className="text-slate-300 font-semibold">{stats.animeStats?.watchingCount || 0} en cours</span>
+                        <span className="text-slate-400">{stats.animeStats?.watchingEpisodes?.toLocaleString() || 0} épisodes vus</span>
+                      </div>
+                      <div className="flex items-center justify-between py-1">
+                        <span className="text-slate-300 font-semibold">{stats.animeStats?.planToWatchCount || 0} à voir</span>
+                        <span className="text-amber-300 font-semibold">dans votre watchlist</span>
+                      </div>
                     </div>
                   </div>
                 </div>
 
-                {/* KPI 4 : Notes & Appréciation */}
-                <div className="p-5 rounded-2xl bg-dark-900 border border-white/5 relative overflow-hidden group">
-                  <div className="flex items-center justify-between text-slate-400 mb-2">
-                    <span className="text-xs font-bold uppercase tracking-wider">Note Moyenne</span>
-                    <Star className="w-4 h-4 text-amber-400 fill-amber-400" />
-                  </div>
-                  <div className="text-3xl font-extrabold text-white tracking-tight flex items-baseline gap-1">
-                    {stats.averageRating ? stats.averageRating : '—'}{' '}
-                    <span className="text-lg font-medium text-slate-400">/ 10</span>
-                  </div>
-                  <div className="mt-3 pt-3 border-t border-white/5 text-xs text-slate-400 space-y-1">
-                    <div className="flex justify-between">
-                      <span>⭐ Avis enregistrés :</span>
-                      <strong className="text-slate-200">{stats.ratingCount || 0}</strong>
+                {/* PILIER 3 : FILMS (ROSE / MAGENTA) */}
+                <div className="p-6 rounded-3xl bg-dark-900 border border-pink-500/20 relative overflow-hidden flex flex-col justify-between space-y-5">
+                  <div className="space-y-4">
+                    {/* En-tête Pilier */}
+                    <div className="flex items-center justify-between">
+                      <div className="w-12 h-12 rounded-2xl bg-pink-500/10 border border-pink-500/30 flex items-center justify-center text-pink-400 shadow-glow">
+                        <Film className="w-6 h-6" />
+                      </div>
+                      <span className="px-2.5 py-1 rounded-full bg-pink-500/15 border border-pink-500/30 text-xs font-black text-pink-300">
+                        {stats.movieStats?.percentage || 0}% du total
+                      </span>
                     </div>
-                    <div className="flex justify-between">
-                      <span>📑 Dans votre watchlist :</span>
-                      <strong className="text-primary-300">{stats.watchlistCount} à voir</strong>
+
+                    <div>
+                      <h4 className="text-sm font-black uppercase tracking-wider text-pink-400">
+                        WATCHED MOVIES
+                      </h4>
+                      <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400 block mt-0.5">
+                        TOTAL SPENT WATCHING
+                      </span>
+
+                      {/* Grands Chiffres */}
+                      <div className="flex items-baseline gap-2 my-3">
+                        <div>
+                          <span className="text-3xl sm:text-4xl font-black text-white">{stats.movieStats?.days || 0}</span>
+                          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest block text-center">J</span>
+                        </div>
+                        <span className="text-xl font-bold text-slate-600">:</span>
+                        <div>
+                          <span className="text-3xl sm:text-4xl font-black text-white">{stats.movieStats?.hours || 0}</span>
+                          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest block text-center">H</span>
+                        </div>
+                        <span className="text-xl font-bold text-slate-600">:</span>
+                        <div>
+                          <span className="text-3xl sm:text-4xl font-black text-white">{stats.movieStats?.minutes || 0}</span>
+                          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest block text-center">M</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Sparkline des 90 jours */}
+                    <div className="py-2 border-t border-b border-white/5 space-y-1">
+                      <div className="flex items-center justify-between text-[10px] font-bold text-slate-400 uppercase">
+                        <span>Tendance 90 jours</span>
+                        <span>{stats.moviesHours}h totales</span>
+                      </div>
+                      <div className="py-1">
+                        <Sparkline data={stats.movieStats?.sparkline} color="#ec4899" height={36} />
+                      </div>
+                    </div>
+
+                    {/* Tableau Détails */}
+                    <div className="space-y-2 text-xs">
+                      <div className="flex items-center justify-between py-1 border-b border-white/5">
+                        <span className="text-slate-300 font-semibold">{stats.movieStats?.completedCount || 0} vus</span>
+                        <span className="text-slate-400">
+                          {stats.movieStats?.days || 0}.{Math.floor((stats.movieStats?.hours || 0) / 2.4)} jours
+                        </span>
+                      </div>
+                      <div className="flex items-center justify-between py-1 border-b border-white/5">
+                        <span className="text-slate-300 font-semibold">{stats.movieStats?.planToWatchCount || 0} à voir</span>
+                        <span className="text-pink-300 font-semibold">dans votre watchlist</span>
+                      </div>
+                      <div className="flex items-center justify-between py-1">
+                        <span className="text-slate-300 font-semibold">0 abandonné</span>
+                        <span className="text-slate-400">0 jour</span>
+                      </div>
                     </div>
                   </div>
                 </div>
               </div>
 
-              {/* Ligne 2 : Répartition par Genre & Chronologie "Quand ai-je regardé ?" */}
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                {/* Bloc Genres */}
-                <div className="p-6 rounded-2xl bg-dark-900 border border-white/5 space-y-4">
-                  <h3 className="text-base font-bold text-white flex items-center gap-2">
-                    <TrendingUp className="w-5 h-5 text-primary-400" />
-                    <span>Répartition par Genre</span>
-                  </h3>
-                  <p className="text-xs text-slate-400">
-                    Pourcentages de visionnage par genre cinématographique :
-                  </p>
+              {/* ================================================================= */}
+              {/* SECTION 4 : TOP GENRES (BARRE COULEUR HORIZONTALE SIMKL)          */}
+              {/* ================================================================= */}
+              <div className="p-6 rounded-3xl bg-dark-900 border border-white/5 space-y-5">
+                <div className="flex flex-wrap items-center justify-between gap-4">
+                  <div>
+                    <h3 className="text-xl font-black text-white flex items-center gap-2">
+                      <span>Your top <span className="text-amber-400">genres</span></span>
+                    </h3>
+                    <p className="text-xs text-slate-400 mt-0.5">
+                      Classés par titres vus ou temps passé :
+                    </p>
+                  </div>
 
-                  <div className="space-y-3 pt-2">
-                    {stats.topGenres && stats.topGenres.length > 0 ? (
-                      stats.topGenres.slice(0, 8).map((g, idx) => (
-                        <div key={g.name} className="space-y-1">
-                          <div className="flex justify-between text-xs font-medium">
-                            <span className="text-slate-200 font-semibold">{g.name}</span>
-                            <span className="text-slate-400">{g.percentage}% ({g.count} visionnage{g.count > 1 ? 's' : ''})</span>
-                          </div>
-                          <div className="w-full h-2 rounded-full bg-dark-800 overflow-hidden">
-                            <div
-                              className={`h-full rounded-full ${
-                                idx === 0 ? 'bg-primary-500' : idx === 1 ? 'bg-indigo-500' : idx === 2 ? 'bg-emerald-500' : idx === 3 ? 'bg-amber-500' : 'bg-slate-600'
-                              }`}
-                              style={{ width: `${Math.max(5, g.percentage)}%` }}
-                            />
-                          </div>
-                        </div>
-                      ))
-                    ) : (
-                      <p className="text-xs text-slate-500 italic py-4">Aucune donnée de genre pour le moment.</p>
-                    )}
+                  {/* Switch par Titres vs par Temps */}
+                  <div className="flex items-center gap-1.5 p-1 bg-dark-850 rounded-xl border border-white/5 text-xs">
+                    <button
+                      onClick={() => setGenreSortBy('items')}
+                      className={`px-3 py-1.5 rounded-lg font-bold transition-all ${
+                        genreSortBy === 'items'
+                          ? 'bg-amber-500 text-dark-950 shadow-glow'
+                          : 'text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      PAR TITRES
+                    </button>
+                    <button
+                      onClick={() => setGenreSortBy('time')}
+                      className={`px-3 py-1.5 rounded-lg font-bold transition-all ${
+                        genreSortBy === 'time'
+                          ? 'bg-amber-500 text-dark-950 shadow-glow'
+                          : 'text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      PAR TEMPS PASSÉ
+                    </button>
                   </div>
                 </div>
 
-                {/* Bloc Quand ai-je regardé ? (Timeline Mensuelle) */}
-                <div className="p-6 rounded-2xl bg-dark-900 border border-white/5 space-y-4">
-                  <h3 className="text-base font-bold text-white flex items-center gap-2">
-                    <Calendar className="w-5 h-5 text-emerald-400" />
-                    <span>Quand ai-je regardé ? (Chronologie)</span>
-                  </h3>
-                  <p className="text-xs text-slate-400">
-                    Historique de vos visionnages mois par mois :
-                  </p>
+                {/* Barre Multi-couleur Segmentée */}
+                {stats.topGenres && stats.topGenres.length > 0 ? (
+                  <div className="space-y-4">
+                    <div className="w-full h-8 sm:h-10 rounded-xl overflow-hidden flex bg-dark-800 shadow-inner">
+                      {stats.topGenres.slice(0, 10).map((g) => (
+                        <div
+                          key={g.name}
+                          style={{
+                            width: `${Math.max(3, g.percentage)}%`,
+                            backgroundColor: g.color || '#3b82f6',
+                          }}
+                          className="h-full flex items-center justify-center text-[10px] sm:text-xs font-black text-white truncate px-1 transition-all hover:opacity-90"
+                          title={`${g.name} : ${g.percentage}% (${genreSortBy === 'items' ? `${g.count} titres` : `${Math.round(g.minutes / 60)}h`})`}
+                        >
+                          {g.percentage >= 7 ? `${g.percentage}%` : ''}
+                        </div>
+                      ))}
+                    </div>
 
-                  <div className="space-y-2.5 pt-2 max-h-[350px] overflow-y-auto pr-1">
-                    {stats.timeline && stats.timeline.length > 0 ? (
-                      stats.timeline.map((t) => (
-                        <div key={t.key} className="flex items-center justify-between p-3 rounded-xl bg-dark-850 border border-white/5 text-xs">
-                          <div>
-                            <p className="font-bold text-slate-200">{t.label}</p>
-                            <p className="text-[11px] text-slate-400 mt-0.5">
-                              {t.movies} films • {t.tv} séries • {t.anime} mangas
-                            </p>
-                          </div>
-                          <span className="px-2.5 py-1 rounded-lg bg-emerald-500/15 text-emerald-300 font-bold border border-emerald-500/30">
-                            {t.count} visionnage{t.count > 1 ? 's' : ''}
+                    {/* Étiquettes et Pourcentages Détaillés */}
+                    <div className="flex flex-wrap gap-2.5 pt-1">
+                      {stats.topGenres.slice(0, 10).map((g) => (
+                        <div
+                          key={g.name}
+                          className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-dark-850 border border-white/5 text-xs"
+                        >
+                          <span
+                            className="w-2.5 h-2.5 rounded-full"
+                            style={{ backgroundColor: g.color || '#3b82f6' }}
+                          />
+                          <span className="font-bold text-slate-200">{g.name}</span>
+                          <span className="text-[11px] font-semibold text-slate-400">
+                            {g.percentage}% ({genreSortBy === 'items' ? `${g.count} vus` : `${Math.round(g.minutes / 60)}h`})
                           </span>
                         </div>
-                      ))
-                    ) : (
-                      <p className="text-xs text-slate-500 italic py-4">Aucun historique temporel disponible.</p>
-                    )}
+                      ))}
+                    </div>
                   </div>
+                ) : (
+                  <p className="text-xs text-slate-500 italic py-4">Aucune donnée de genre enregistrée.</p>
+                )}
+              </div>
+
+              {/* ================================================================= */}
+              {/* SECTION 5 : TOP RÉALISATEURS (MOST-WATCHED DIRECTORS)             */}
+              {/* ================================================================= */}
+              <div className="p-6 rounded-3xl bg-dark-900 border border-white/5 space-y-6">
+                <div>
+                  <h3 className="text-xl font-black text-white flex items-center gap-2">
+                    <span>Your most-watched <span className="text-amber-400">directors</span></span>
+                  </h3>
+                  <p className="text-xs text-slate-400 mt-0.5">
+                    Les cinéastes vers lesquels vous revenez sans cesse.
+                  </p>
                 </div>
+
+                {stats.topDirectors && stats.topDirectors.length > 0 ? (
+                  <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+                    {/* Top 4 Grands Réalisateurs (Gauche - 8 cols) */}
+                    <div className="lg:col-span-8 grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      {stats.topDirectors.slice(0, 4).map((dir, idx) => (
+                        <div
+                          key={dir.name}
+                          className="p-4 rounded-2xl bg-dark-850/80 border border-white/5 flex gap-4 items-center group hover:border-amber-500/30 transition-all"
+                        >
+                          <div className="w-16 h-22 rounded-xl bg-dark-800 overflow-hidden flex-shrink-0 relative border border-white/5">
+                            {dir.posterPath ? (
+                              <img
+                                src={getPosterUrl(dir.posterPath) || ''}
+                                alt={dir.name}
+                                className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                              />
+                            ) : (
+                              <div className="w-full h-full flex items-center justify-center text-slate-600">
+                                <Film className="w-6 h-6" />
+                              </div>
+                            )}
+                          </div>
+
+                          <div className="min-w-0 flex-1 space-y-1">
+                            <span className="px-2 py-0.5 rounded-md bg-amber-500/15 text-amber-300 text-[10px] font-extrabold border border-amber-500/30">
+                              № 0{idx + 1}
+                            </span>
+                            <h5 className="font-extrabold text-sm text-white truncate group-hover:text-amber-400 transition-colors">
+                              {dir.name}
+                            </h5>
+                            <p className="text-xs text-slate-400">
+                              {dir.count} film{dir.count > 1 ? 's' : ''} • <strong className="text-slate-200">{dir.hours} h</strong>
+                            </p>
+                            {dir.sampleTitle && (
+                              <p className="text-[11px] text-slate-500 truncate italic">
+                                Ex : {dir.sampleTitle}
+                              </p>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+
+                    {/* Rangs 5 à 10 (Droite - 4 cols) */}
+                    <div className="lg:col-span-4 p-4 rounded-2xl bg-dark-850/50 border border-white/5 flex flex-col justify-between">
+                      <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400 block mb-3">
+                        RANGS 5 À 10
+                      </span>
+
+                      <div className="space-y-2.5">
+                        {stats.topDirectors.slice(4, 10).map((dir, idx) => (
+                          <div key={dir.name} className="flex items-center justify-between text-xs py-1 border-b border-white/5 last:border-0">
+                            <div className="flex items-center gap-2.5 min-w-0">
+                              <span className="text-[11px] font-extrabold text-slate-500">
+                                {String(idx + 5).padStart(2, '0')}
+                              </span>
+                              <div className="w-6 h-8 rounded bg-dark-800 overflow-hidden flex-shrink-0">
+                                {dir.posterPath && (
+                                  <img src={getPosterUrl(dir.posterPath) || ''} alt={dir.name} className="w-full h-full object-cover" />
+                                )}
+                              </div>
+                              <span className="font-bold text-slate-200 truncate">{dir.name}</span>
+                            </div>
+                            <span className="text-slate-400 font-semibold text-[11px] flex-shrink-0">
+                              {dir.count} film{dir.count > 1 ? 's' : ''}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <p className="text-xs text-slate-500 italic py-4">
+                    Les informations de réalisateurs seront affichées après vos prochains visionnages de films.
+                  </p>
+                )}
+              </div>
+
+              {/* ================================================================= */}
+              {/* SECTION 6 : RÉCAPITULATIF MENSUEL & HEBDOMADAIRE (RECAPS)         */}
+              {/* ================================================================= */}
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                {/* 1. RÉCAPITULATIF MENSUEL */}
+                {(() => {
+                  const mRecap = monthTab === 'last' ? stats.lastMonthRecap : stats.thisMonthRecap;
+                  return (
+                    <div className="p-6 rounded-3xl bg-dark-900 border border-white/5 space-y-5">
+                      <div className="flex flex-wrap items-center justify-between gap-3">
+                        <div>
+                          <h3 className="text-lg font-black text-white flex items-center gap-2">
+                            <span>Your month, <span className="text-amber-400">recapped</span></span>
+                          </h3>
+                          <p className="text-[11px] text-slate-400 mt-0.5">
+                            Bilan de votre temps de visionnage mensuel
+                          </p>
+                        </div>
+
+                        {/* Switch Mois Dernier vs Ce Mois */}
+                        <div className="flex items-center gap-1 p-1 bg-dark-850 rounded-xl border border-white/5 text-xs">
+                          <button
+                            onClick={() => setMonthTab('last')}
+                            className={`px-3 py-1 rounded-lg font-bold transition-all ${
+                              monthTab === 'last' ? 'bg-amber-500 text-dark-950 font-black shadow' : 'text-slate-400 hover:text-white'
+                            }`}
+                          >
+                            MOIS DERNIER
+                          </button>
+                          <button
+                            onClick={() => setMonthTab('this')}
+                            className={`px-3 py-1 rounded-lg font-bold transition-all ${
+                              monthTab === 'this' ? 'bg-amber-500 text-dark-950 font-black shadow' : 'text-slate-400 hover:text-white'
+                            }`}
+                          >
+                            CE MOIS-CI
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Bannière SPENT */}
+                      <div className="p-4 rounded-2xl bg-dark-850 border border-white/5 space-y-3">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400">
+                            {monthTab === 'last' ? 'TEMPS PASSÉ LE MOIS DERNIER' : 'TEMPS PASSÉ CE MOIS-CI'}
+                          </span>
+                          <span className="text-xs font-bold text-amber-400">{mRecap?.label}</span>
+                        </div>
+
+                        <div className="flex flex-wrap items-baseline justify-between gap-4">
+                          <div>
+                            <span className="text-3xl font-black text-white">
+                              {mRecap?.totalHours || 0}h {mRecap?.totalMinutes || 0}m
+                            </span>
+                          </div>
+
+                          <div className="flex items-center gap-4 text-xs text-slate-400">
+                            <span>📺 {mRecap?.tvShowsCount || 0} séries : <strong className="text-slate-200">{mRecap?.tvHours || 0}h</strong></span>
+                            <span>✨ {mRecap?.animeCount || 0} animés : <strong className="text-amber-300">{mRecap?.animeHours || 0}h</strong></span>
+                            <span>🎬 {mRecap?.movieCount || 0} films : <strong className="text-pink-300">{mRecap?.movieHours || 0}h</strong></span>
+                          </div>
+                        </div>
+
+                        {/* Mini KPIs du mois */}
+                        <div className="grid grid-cols-3 gap-2 pt-3 border-t border-white/5 text-[11px]">
+                          <div>
+                            <span className="text-slate-400 block">Jours actifs</span>
+                            <strong className="text-slate-200">{mRecap?.activeDays || 0} jours</strong>
+                          </div>
+                          <div>
+                            <span className="text-slate-400 block">Moyenne/jour</span>
+                            <strong className="text-slate-200">
+                              {Math.floor((mRecap?.avgMinutesPerDay || 0) / 60)}h {(mRecap?.avgMinutesPerDay || 0) % 60}m
+                            </strong>
+                          </div>
+                          <div>
+                            <span className="text-slate-400 block">Jour record</span>
+                            <strong className="text-amber-300 truncate block">
+                              {mRecap?.mostActiveDay?.label ? `${mRecap.mostActiveDay.hours}h (${mRecap.mostActiveDay.label.split(' ')[0]})` : '—'}
+                            </strong>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Podiums Top Animés & Films du Mois */}
+                      <div className="space-y-3">
+                        <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400 block">
+                          LES PLUS REGARDÉS CE MOIS
+                        </span>
+
+                        <div className="grid grid-cols-3 gap-3">
+                          {(mRecap?.topAnime && mRecap.topAnime.length > 0 ? mRecap.topAnime : mRecap?.topShows || []).slice(0, 3).map((item, idx) => (
+                            <div key={item.title + idx} className="p-2.5 rounded-xl bg-dark-850 border border-white/5 space-y-1.5 text-center group">
+                              <div className="w-full aspect-[2/3] rounded-lg bg-dark-800 overflow-hidden relative">
+                                {item.posterPath ? (
+                                  <img src={getPosterUrl(item.posterPath) || ''} alt={item.title} className="w-full h-full object-cover group-hover:scale-105 transition-all" />
+                                ) : (
+                                  <div className="w-full h-full flex items-center justify-center text-slate-600">
+                                    <Sparkles className="w-6 h-6" />
+                                  </div>
+                                )}
+                                <span className="absolute top-1 left-1 w-5 h-5 rounded-md bg-amber-500 text-dark-950 text-[10px] font-black flex items-center justify-center shadow">
+                                  {idx + 1}
+                                </span>
+                              </div>
+                              <p className="text-xs font-bold text-white truncate" title={item.title}>{item.title}</p>
+                              <p className="text-[10px] text-slate-400">{item.plays ? `${item.plays} épisodes` : `${Math.round(item.minutes / 60)}h`}</p>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })()}
+
+                {/* 2. RÉCAPITULATIF HEBDOMADAIRE */}
+                {(() => {
+                  const wRecap = weekTab === 'last' ? stats.lastWeekRecap : stats.thisWeekRecap;
+                  return (
+                    <div className="p-6 rounded-3xl bg-dark-900 border border-white/5 space-y-5">
+                      <div className="flex flex-wrap items-center justify-between gap-3">
+                        <div>
+                          <h3 className="text-lg font-black text-white flex items-center gap-2">
+                            <span>Your week, <span className="text-amber-400">recapped</span></span>
+                          </h3>
+                          <p className="text-[11px] text-slate-400 mt-0.5">
+                            Bilan de votre temps de visionnage hebdomadaire
+                          </p>
+                        </div>
+
+                        {/* Switch Semaine Dernière vs Cette Semaine */}
+                        <div className="flex items-center gap-1 p-1 bg-dark-850 rounded-xl border border-white/5 text-xs">
+                          <button
+                            onClick={() => setWeekTab('last')}
+                            className={`px-3 py-1 rounded-lg font-bold transition-all ${
+                              weekTab === 'last' ? 'bg-amber-500 text-dark-950 font-black shadow' : 'text-slate-400 hover:text-white'
+                            }`}
+                          >
+                            SEMAINE DERNIÈRE
+                          </button>
+                          <button
+                            onClick={() => setWeekTab('this')}
+                            className={`px-3 py-1 rounded-lg font-bold transition-all ${
+                              weekTab === 'this' ? 'bg-amber-500 text-dark-950 font-black shadow' : 'text-slate-400 hover:text-white'
+                            }`}
+                          >
+                            CETTE SEMAINE
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Bannière SPENT */}
+                      <div className="p-4 rounded-2xl bg-dark-850 border border-white/5 space-y-3">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400">
+                            {weekTab === 'last' ? 'TEMPS PASSÉ LA SEMAINE DERNIÈRE' : 'TEMPS PASSÉ CETTE SEMAINE'}
+                          </span>
+                          <span className="text-xs font-bold text-amber-400">{wRecap?.label}</span>
+                        </div>
+
+                        <div className="flex flex-wrap items-baseline justify-between gap-4">
+                          <div>
+                            <span className="text-3xl font-black text-white">
+                              {wRecap?.totalHours || 0}h {wRecap?.totalMinutes || 0}m
+                            </span>
+                          </div>
+
+                          <div className="flex items-center gap-4 text-xs text-slate-400">
+                            <span>📺 {wRecap?.tvShowsCount || 0} séries : <strong className="text-slate-200">{wRecap?.tvHours || 0}h</strong></span>
+                            <span>✨ {wRecap?.animeCount || 0} animés : <strong className="text-amber-300">{wRecap?.animeHours || 0}h</strong></span>
+                          </div>
+                        </div>
+
+                        {/* Mini KPIs de la semaine */}
+                        <div className="grid grid-cols-3 gap-2 pt-3 border-t border-white/5 text-[11px]">
+                          <div>
+                            <span className="text-slate-400 block">Jours actifs</span>
+                            <strong className="text-slate-200">{wRecap?.activeDays || 0} / 7 jours</strong>
+                          </div>
+                          <div>
+                            <span className="text-slate-400 block">Moyenne/jour</span>
+                            <strong className="text-slate-200">
+                              {Math.floor((wRecap?.avgMinutesPerDay || 0) / 60)}h {(wRecap?.avgMinutesPerDay || 0) % 60}m
+                            </strong>
+                          </div>
+                          <div>
+                            <span className="text-slate-400 block">Jour record</span>
+                            <strong className="text-amber-300 truncate block">
+                              {wRecap?.mostActiveDay?.label ? `${wRecap.mostActiveDay.hours}h` : '—'}
+                            </strong>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Podiums Séries les plus vues cette semaine */}
+                      <div className="space-y-3">
+                        <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400 block">
+                          SÉRIES & ANIMÉS LES PLUS SUIVIS
+                        </span>
+
+                        <div className="grid grid-cols-3 gap-3">
+                          {(wRecap?.topShows && wRecap.topShows.length > 0 ? wRecap.topShows : wRecap?.topAnime || []).slice(0, 3).map((item, idx) => (
+                            <div key={item.title + idx} className="p-2.5 rounded-xl bg-dark-850 border border-white/5 space-y-1.5 text-center group">
+                              <div className="w-full aspect-[2/3] rounded-lg bg-dark-800 overflow-hidden relative">
+                                {item.posterPath ? (
+                                  <img src={getPosterUrl(item.posterPath) || ''} alt={item.title} className="w-full h-full object-cover group-hover:scale-105 transition-all" />
+                                ) : (
+                                  <div className="w-full h-full flex items-center justify-center text-slate-600">
+                                    <Tv className="w-6 h-6" />
+                                  </div>
+                                )}
+                                <span className="absolute top-1 left-1 w-5 h-5 rounded-md bg-amber-500 text-dark-950 text-[10px] font-black flex items-center justify-center shadow">
+                                  {idx + 1}
+                                </span>
+                              </div>
+                              <p className="text-xs font-bold text-white truncate" title={item.title}>{item.title}</p>
+                              <p className="text-[10px] text-slate-400">{item.plays ? `${item.plays} épisodes` : `${Math.round(item.minutes / 60)}h`}</p>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })()}
               </div>
             </>
           ) : null}

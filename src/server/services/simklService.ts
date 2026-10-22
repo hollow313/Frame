@@ -358,7 +358,7 @@ export class SimklService {
    */
   public static async getWatchedFromSimkl(
     accessToken: string,
-    type: 'movies' | 'shows' = 'movies',
+    type: 'movies' | 'shows' | 'anime' = 'movies',
     clientIdOverride?: string
   ): Promise<any[]> {
     const clientId = this.getClientId(clientIdOverride);
@@ -374,13 +374,62 @@ export class SimklService {
         headers['simkl-api-key'] = clientId;
       }
 
-      const res = await fetch(`${SIMKL_API_BASE}/sync/all-items/${type}/completed`, { headers });
-      if (!res.ok) return [];
-      const data = (await res.json()) as any;
-      return data[type] || [];
+      // Fetch completed items
+      const resCompleted = await fetch(`${SIMKL_API_BASE}/sync/all-items/${type}/completed`, { headers });
+      const dataCompleted = resCompleted.ok ? ((await resCompleted.json()) as any) : {};
+      const completedList = ((dataCompleted[type] || []) as any[]).map((item) => ({ ...item, simkl_status: 'completed' }));
+
+      // Also fetch watching items (for TV shows and anime in-progress!)
+      let watchingList: any[] = [];
+      if (type === 'shows' || type === 'anime') {
+        const resWatching = await fetch(`${SIMKL_API_BASE}/sync/all-items/${type}/watching`, { headers });
+        const dataWatching = resWatching.ok ? ((await resWatching.json()) as any) : {};
+        watchingList = ((dataWatching[type] || []) as any[]).map((item) => ({ ...item, simkl_status: 'watching' }));
+      }
+
+      return [...completedList, ...watchingList];
     } catch {
       return [];
     }
+  }
+
+  /**
+   * Récupérer les statistiques authentiques depuis Simkl (/users/me/stats ou /users/{id}/stats)
+   */
+  public static async getSimklStats(
+    accessToken: string,
+    clientIdOverride?: string,
+    simklUserId?: string
+  ): Promise<any> {
+    const clientId = this.getClientId(clientIdOverride);
+    if (!accessToken) return null;
+
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${accessToken.trim()}`,
+      'User-Agent': 'Frame/1.0',
+    };
+    if (clientId) {
+      headers['simkl-api-key'] = clientId;
+    }
+
+    const endpoints = [
+      simklUserId ? `${SIMKL_API_BASE}/users/${simklUserId}/stats` : null,
+      `${SIMKL_API_BASE}/users/me/stats`,
+    ].filter(Boolean) as string[];
+
+    for (const ep of endpoints) {
+      try {
+        const res = await fetch(ep, { headers });
+        if (res.ok) {
+          const data = await res.json();
+          if (data && (data.total_mins || data.tv || data.movies || data.anime || data.watched_time || data.stats || data.summary)) {
+            return data;
+          }
+        }
+      } catch {}
+    }
+    return null;
   }
 
   /**
@@ -432,31 +481,49 @@ export class SimklService {
   }
 
   /**
-   * Synchroniser tous les éléments Simkl vers Frame pour un utilisateur
+   * Synchroniser tous les éléments Simkl (Films, Séries, Animés / Mangas) vers Frame pour un utilisateur
    */
   public static async syncSimklToFrame(
     userId: number,
     accessToken: string,
     clientIdOverride?: string
-  ): Promise<{ importedMovies: number; importedShows: number }> {
+  ): Promise<{ importedMovies: number; importedShows: number; importedAnime: number; simklStats?: any }> {
     const movies = await this.getWatchedFromSimkl(accessToken, 'movies', clientIdOverride);
     const shows = await this.getWatchedFromSimkl(accessToken, 'shows', clientIdOverride);
+    const animes = await this.getWatchedFromSimkl(accessToken, 'anime', clientIdOverride);
+
+    // Récupérer et mettre en cache les statistiques officielles Simkl
+    const userRow = db.prepare('SELECT simkl_user_id FROM users WHERE id = ?').get(userId) as any;
+    const simklStats = await this.getSimklStats(accessToken, clientIdOverride, userRow?.simkl_user_id);
+    if (simklStats) {
+      try {
+        db.prepare('UPDATE users SET simkl_stats_json = ? WHERE id = ?').run(JSON.stringify(simklStats), userId);
+      } catch {}
+    }
 
     let importedMovies = 0;
     let importedShows = 0;
+    let importedAnime = 0;
 
     const insertStmt = db.prepare(`
-      INSERT INTO watched_items (user_id, tmdb_id, media_type, title, poster_path, release_date, watched_at, synced_simkl)
-      VALUES (?, ?, ?, ?, ?, ?, ?, 1)
+      INSERT INTO watched_items (
+        user_id, tmdb_id, media_type, title, poster_path, release_date, watched_at, synced_simkl, episodes_watched, runtime_minutes, genres
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)
       ON CONFLICT(user_id, tmdb_id, media_type, season_number, episode_number) DO UPDATE SET
-        synced_simkl = 1
+        synced_simkl = 1,
+        episodes_watched = excluded.episodes_watched,
+        runtime_minutes = excluded.runtime_minutes,
+        genres = COALESCE(excluded.genres, watched_items.genres)
     `);
 
-    // Insérer les films
+    // 1. Insérer les films
     for (const m of movies) {
       const tmdbId = m.movie?.ids?.tmdb ? parseInt(m.movie.ids.tmdb, 10) : null;
       if (tmdbId) {
         try {
+          const runtime = m.movie?.runtime || 105;
+          const genresJson = m.movie?.genres ? JSON.stringify(m.movie.genres.map((name: string) => ({ id: 0, name }))) : null;
           insertStmt.run(
             userId,
             tmdbId,
@@ -464,20 +531,25 @@ export class SimklService {
             m.movie.title || 'Inconnu',
             m.movie.poster ? `https://simkl.in/posters/${m.movie.poster}_m.webp` : null,
             m.movie.year ? `${m.movie.year}-01-01` : null,
-            m.last_watched_at || new Date().toISOString()
+            m.last_watched_at || new Date().toISOString(),
+            1,
+            runtime,
+            genresJson
           );
           importedMovies++;
-        } catch {
-          // Doublon ou erreur
-        }
+        } catch {}
       }
     }
 
-    // Insérer les séries
+    // 2. Insérer les séries TV
     for (const s of shows) {
       const tmdbId = s.show?.ids?.tmdb ? parseInt(s.show.ids.tmdb, 10) : null;
       if (tmdbId) {
         try {
+          const eps = s.watched_episodes_count || (s.simkl_status === 'completed' ? (s.show?.episodes_count || 12) : 1);
+          const perEpMins = s.show?.runtime || 45;
+          const totalMins = eps * perEpMins;
+          const genresJson = s.show?.genres ? JSON.stringify(s.show.genres.map((name: string) => ({ id: 0, name }))) : null;
           insertStmt.run(
             userId,
             tmdbId,
@@ -485,15 +557,46 @@ export class SimklService {
             s.show.title || 'Inconnu',
             s.show.poster ? `https://simkl.in/posters/${s.show.poster}_m.webp` : null,
             s.show.year ? `${s.show.year}-01-01` : null,
-            s.last_watched_at || new Date().toISOString()
+            s.last_watched_at || new Date().toISOString(),
+            eps,
+            totalMins,
+            genresJson
           );
           importedShows++;
-        } catch {
-          // Doublon ou erreur
-        }
+        } catch {}
       }
     }
 
-    return { importedMovies, importedShows };
+    // 3. Insérer les animés / mangas
+    for (const a of animes) {
+      const tmdbId = a.anime?.ids?.tmdb ? parseInt(a.anime.ids.tmdb, 10) : null;
+      if (tmdbId) {
+        try {
+          const eps = a.watched_episodes_count || (a.simkl_status === 'completed' ? (a.anime?.episodes_count || 12) : 1);
+          const perEpMins = a.anime?.runtime || 24;
+          const totalMins = eps * perEpMins;
+          const genres = (a.anime?.genres || []).map((name: string) => ({ id: 0, name }));
+          if (!genres.some((g: any) => g.name?.toLowerCase().includes('anim'))) {
+            genres.push({ id: 16, name: 'Animation' });
+          }
+          const genresJson = JSON.stringify(genres);
+          insertStmt.run(
+            userId,
+            tmdbId,
+            'tv', // TMDB traite les séries animées en TV
+            a.anime.title || 'Inconnu',
+            a.anime.poster ? `https://simkl.in/posters/${a.anime.poster}_m.webp` : null,
+            a.anime.year ? `${a.anime.year}-01-01` : null,
+            a.last_watched_at || new Date().toISOString(),
+            eps,
+            totalMins,
+            genresJson
+          );
+          importedAnime++;
+        } catch {}
+      }
+    }
+
+    return { importedMovies, importedShows, importedAnime, simklStats };
   }
 }

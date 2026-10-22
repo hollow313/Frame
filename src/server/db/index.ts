@@ -61,6 +61,15 @@ export function initDatabase() {
 
     CREATE INDEX IF NOT EXISTS idx_watched_user ON watched_items(user_id);
     CREATE INDEX IF NOT EXISTS idx_watched_media ON watched_items(tmdb_id, media_type);
+  `);
+
+  // Migrations sécurisées pour statistiques détaillées & Simkl
+  try { db.exec('ALTER TABLE watched_items ADD COLUMN episodes_watched INTEGER DEFAULT 1;'); } catch {}
+  try { db.exec('ALTER TABLE watched_items ADD COLUMN runtime_minutes INTEGER DEFAULT 0;'); } catch {}
+  try { db.exec('ALTER TABLE watched_items ADD COLUMN director TEXT;'); } catch {}
+  try { db.exec('ALTER TABLE users ADD COLUMN simkl_stats_json TEXT;'); } catch {}
+
+  db.exec(`
 
     CREATE TABLE IF NOT EXISTS watchlist (
       id INTEGER PRIMARY KEY AUTOINCREMENT,

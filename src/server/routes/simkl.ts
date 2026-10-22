@@ -285,7 +285,7 @@ router.post('/sync', async (req: AuthenticatedRequest, res: Response): Promise<v
 
     res.json({
       success: true,
-      message: `Synchronisation Simkl réussie ! ${stats.importedMovies} films et ${stats.importedShows} séries importés dans Frame.`,
+      message: `Synchronisation Simkl réussie ! ${stats.importedMovies} films, ${stats.importedShows} séries et ${stats.importedAnime} animés importés dans Frame.`,
       stats,
     });
   } catch (err: any) {

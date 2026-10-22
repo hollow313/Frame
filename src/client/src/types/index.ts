@@ -115,29 +115,142 @@ export interface RecommendationResponse {
   sections: RecommendationSection[];
 }
 
+export interface SimklPillarStats {
+  days: number;
+  hours: number;
+  minutes: number;
+  totalMinutes: number;
+  percentage: number;
+  completedCount: number;
+  totalEpisodes: number;
+  watchingCount?: number;
+  watchingEpisodes?: number;
+  planToWatchCount?: number;
+  planToWatchEpisodes?: number;
+  onHoldCount?: number;
+  droppedCount?: number;
+  sparkline: number[];
+}
+
+export interface DayActivity {
+  date: string; // YYYY-MM-DD
+  count: number;
+  minutes: number;
+  tvMinutes: number;
+  animeMinutes: number;
+  movieMinutes: number;
+  level: number; // 0 à 4
+}
+
+export interface TopDirector {
+  name: string;
+  count: number;
+  hours: number;
+  posterPath?: string | null;
+  sampleTitle?: string;
+}
+
+export interface MediaRecapItem {
+  id?: number;
+  title: string;
+  posterPath?: string | null;
+  plays?: number;
+  minutes: number;
+}
+
+export interface PeriodRecap {
+  periodKey: string;
+  label: string;
+  totalHours: number;
+  totalMinutes: number;
+  tvHours: number;
+  tvMinutes: number;
+  tvShowsCount: number;
+  animeHours: number;
+  animeMinutes: number;
+  animeCount: number;
+  movieHours: number;
+  movieMinutes: number;
+  movieCount: number;
+  activeDays: number;
+  avgMinutesPerDay: number;
+  mostActiveDay?: {
+    date: string;
+    label: string;
+    hours: number;
+    minutes: number;
+  };
+  longestBingeMinutes: number;
+  topAnime: MediaRecapItem[];
+  topMovies: MediaRecapItem[];
+  topShows: MediaRecapItem[];
+}
+
 export interface UserStats {
+  // Global Time & Breakdown
   totalWatched: number;
   moviesWatched: number;
   tvWatched: number;
   animeWatched: number;
+  totalMinutes: number;
+  totalDays: number;
+  remainingHours: number;
+  remainingMinutes: number;
   totalHours: number;
   moviesHours: number;
   tvHours: number;
   animeHours: number;
 
+  // KPIs style Simkl
+  titlesTracked: number;
+  completedTitles: number;
+  completionRate: number;
+  totalEpisodes: number;
+  finishedEpisodes: number;
+  inProgressEpisodes: number;
+  peakYear: number;
+  peakYearHours: number;
+  topWeekday: string;
+  topWeekdayAvgFormatted: string;
+  currentStreak: number;
+  longestStreak: number;
+  last30DaysHours: number;
+  last30DaysActiveDays: number;
+  watchDaysThisYear: number;
+  daysPassedThisYear: number;
+  backlogDays: number;
+  backlogTitlesCount: number;
+  weekStreakDays: boolean[];
+
+  // 3 Piliers (TV, Anime, Films)
+  tvStats: SimklPillarStats;
+  animeStats: SimklPillarStats;
+  movieStats: SimklPillarStats;
+
+  // Heatmap 365 Jours
+  heatmap: DayActivity[];
+
+  // Genres & Réalisateurs
+  topGenres: { name: string; count: number; minutes: number; percentage: number; color?: string }[];
+  topDirectors: TopDirector[];
+
+  // Récapitulatifs Mensuel & Hebdomadaire
+  lastMonthRecap: PeriodRecap;
+  thisMonthRecap: PeriodRecap;
+  lastWeekRecap: PeriodRecap;
+  thisWeekRecap: PeriodRecap;
+
+  // Compatibilité & Watchlist
   currentYear?: number;
   thisYearWatchedCount?: number;
   thisYearTotalHours?: number;
   thisYearMoviesHours?: number;
   thisYearTvHours?: number;
   thisYearAnimeHours?: number;
-
   watchlistCount: number;
   averageRating: number | null;
   ratingCount?: number;
   ratingDistribution?: Record<number, number>;
-
-  topGenres?: { name: string; count: number; percentage: number }[];
   timeline?: { key: string; label: string; count: number; movies: number; tv: number; anime: number }[];
   estimatedHours?: number;
 }
