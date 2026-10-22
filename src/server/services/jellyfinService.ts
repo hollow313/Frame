@@ -183,7 +183,7 @@ export class JellyfinService {
   }
 
   /**
-   * Rechercher un média dans Jellyfin par son ID TMDB ou titre
+   * Rechercher un média dans Jellyfin par son ID TMDB ou titre (vérification stricte anti faux-positifs)
    */
   public static async findItemByTmdbId(
     accessToken: string,
@@ -191,7 +191,8 @@ export class JellyfinService {
     tmdbId: number,
     title?: string,
     mediaType: 'movie' | 'tv' = 'movie',
-    serverUrlOverride?: string
+    serverUrlOverride?: string,
+    year?: number
   ): Promise<{ found: boolean; itemId?: string; name?: string; serverUrl: string }> {
     const rawUrl = serverUrlOverride || this.getUrl();
     if (!rawUrl || !accessToken) return { found: false, serverUrl: rawUrl || '' };
@@ -199,9 +200,17 @@ export class JellyfinService {
 
     const typeFilter = mediaType === 'movie' ? 'Movie' : 'Series';
 
+    const cleanTitle = (str: string) =>
+      str
+        .toLowerCase()
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .replace(/[^a-z0-9]/g, '')
+        .trim();
+
     try {
-      // 1. Recherche directe par Provider ID TMDB
-      const queryUrl = `${url}/Users/${jellyfinUserId}/Items?Recursive=true&AnyProviderIdEquals=tmdb.${tmdbId}&IncludeItemTypes=${typeFilter}`;
+      // 1. Recherche directe par Provider ID TMDB (minuscule tmdb.id)
+      const queryUrl = `${url}/Users/${jellyfinUserId}/Items?Recursive=true&AnyProviderIdEquals=tmdb.${tmdbId}&IncludeItemTypes=${typeFilter}&Fields=ProviderIds,ProductionYear,OriginalTitle`;
       const res = await fetch(queryUrl, {
         headers: {
           'X-Emby-Authorization': this.getAuthHeader(accessToken),
@@ -212,14 +221,42 @@ export class JellyfinService {
       if (res.ok) {
         const data = await res.json() as any;
         if (data.Items && data.Items.length > 0) {
-          const item = data.Items[0];
-          return { found: true, itemId: item.Id, name: item.Name, serverUrl: url };
+          // VÉRIFICATION STRICTE : l'item doit réellement avoir ce tmdbId dans ProviderIds
+          const exactMatch = data.Items.find((item: any) => {
+            const pId = item.ProviderIds?.Tmdb || item.ProviderIds?.tmdb || item.ProviderIds?.TmdbId;
+            return pId && String(pId) === String(tmdbId);
+          });
+          if (exactMatch) {
+            return { found: true, itemId: exactMatch.Id, name: exactMatch.Name, serverUrl: url };
+          }
         }
       }
 
-      // 2. Repli par recherche de titre
-      if (title) {
-        const searchUrl = `${url}/Users/${jellyfinUserId}/Items?Recursive=true&SearchTerm=${encodeURIComponent(title)}&IncludeItemTypes=${typeFilter}&Limit=1`;
+      // 2. Recherche avec Provider ID Majuscule (Tmdb.id)
+      const queryUrlUpper = `${url}/Users/${jellyfinUserId}/Items?Recursive=true&AnyProviderIdEquals=Tmdb.${tmdbId}&IncludeItemTypes=${typeFilter}&Fields=ProviderIds,ProductionYear,OriginalTitle`;
+      const resUpper = await fetch(queryUrlUpper, {
+        headers: {
+          'X-Emby-Authorization': this.getAuthHeader(accessToken),
+          'Authorization': this.getAuthHeader(accessToken),
+        },
+      });
+
+      if (resUpper.ok) {
+        const dataUpper = await resUpper.json() as any;
+        if (dataUpper.Items && dataUpper.Items.length > 0) {
+          const exactMatch = dataUpper.Items.find((item: any) => {
+            const pId = item.ProviderIds?.Tmdb || item.ProviderIds?.tmdb || item.ProviderIds?.TmdbId;
+            return pId && String(pId) === String(tmdbId);
+          });
+          if (exactMatch) {
+            return { found: true, itemId: exactMatch.Id, name: exactMatch.Name, serverUrl: url };
+          }
+        }
+      }
+
+      // 3. Repli par recherche de titre stricte
+      if (title && title.trim()) {
+        const searchUrl = `${url}/Users/${jellyfinUserId}/Items?Recursive=true&SearchTerm=${encodeURIComponent(title.trim())}&IncludeItemTypes=${typeFilter}&Fields=ProviderIds,ProductionYear,OriginalTitle&Limit=20`;
         const searchRes = await fetch(searchUrl, {
           headers: {
             'X-Emby-Authorization': this.getAuthHeader(accessToken),
@@ -230,8 +267,33 @@ export class JellyfinService {
         if (searchRes.ok) {
           const data = await searchRes.json() as any;
           if (data.Items && data.Items.length > 0) {
-            const item = data.Items[0];
-            return { found: true, itemId: item.Id, name: item.Name, serverUrl: url };
+            const normalizedTarget = cleanTitle(title);
+
+            for (const item of data.Items) {
+              // Vérifier si le TMDB ID correspond dans les métadonnées de l'élément
+              const pId = item.ProviderIds?.Tmdb || item.ProviderIds?.tmdb || item.ProviderIds?.TmdbId;
+              if (pId && String(pId) === String(tmdbId)) {
+                return { found: true, itemId: item.Id, name: item.Name, serverUrl: url };
+              }
+
+              // Comparaison stricte des titres normalisés
+              const itemNameNorm = item.Name ? cleanTitle(item.Name) : '';
+              const itemOrigNorm = item.OriginalTitle ? cleanTitle(item.OriginalTitle) : '';
+
+              const nameMatches = (itemNameNorm.length > 0 && itemNameNorm === normalizedTarget) ||
+                                  (itemOrigNorm.length > 0 && itemOrigNorm === normalizedTarget);
+
+              if (nameMatches) {
+                // Si l'année est connue et l'élément a une année de production, s'assurer que l'écart est <= 1 an
+                if (year && item.ProductionYear) {
+                  if (Math.abs(item.ProductionYear - year) <= 1) {
+                    return { found: true, itemId: item.Id, name: item.Name, serverUrl: url };
+                  }
+                } else {
+                  return { found: true, itemId: item.Id, name: item.Name, serverUrl: url };
+                }
+              }
+            }
           }
         }
       }

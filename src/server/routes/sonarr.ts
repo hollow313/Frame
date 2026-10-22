@@ -33,7 +33,8 @@ router.get('/status', async (_req, res) => {
 router.get('/check/series', async (req, res) => {
   try {
     const title = (req.query.title as string) || '';
-    const status = await ArrService.checkSonarrSeries(title);
+    const tvdbId = req.query.tvdbId ? parseInt(req.query.tvdbId as string, 10) : undefined;
+    const status = await ArrService.checkSonarrSeries(title, tvdbId);
     res.json(status);
   } catch (err: any) {
     res.status(500).json({ error: err.message });

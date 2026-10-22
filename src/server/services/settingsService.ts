@@ -87,11 +87,13 @@ export function getAllSettingsMasked(): Record<string, { configured: boolean; va
     'TMDB_API_KEY',
     'SEER_URL',
     'SEER_API_KEY',
+    'SEER_DEFAULT_USER_ID',
     'SONARR_URL',
     'SONARR_API_KEY',
     'RADARR_URL',
     'RADARR_API_KEY',
     'SIMKL_CLIENT_ID',
+    'SIMKL_CLIENT_SECRET',
     'DEFAULT_LANGUAGE',
     'ALLOW_REGISTRATION',
     'LDAP_ENABLED',
@@ -112,12 +114,14 @@ export function getAllSettingsMasked(): Record<string, { configured: boolean; va
     const val = getSetting(k);
     const configured = Boolean(val && val.trim().length > 0 && val !== 'false');
 
-    // Les URLs, flags booléens et filtres sont lisibles en clair
+    // Les URLs, flags booléens, identifiants publics et filtres sont lisibles en clair
     if (
       k.endsWith('_URL') ||
       k.endsWith('_ENABLED') ||
       k === 'DEFAULT_LANGUAGE' ||
       k === 'ALLOW_REGISTRATION' ||
+      k === 'SEER_DEFAULT_USER_ID' ||
+      k === 'SIMKL_CLIENT_ID' ||
       k === 'SSO_HEADER' ||
       k === 'LDAP_BASE_DN' ||
       k === 'LDAP_BIND_DN' ||

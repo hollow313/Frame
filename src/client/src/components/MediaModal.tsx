@@ -304,19 +304,22 @@ export const MediaModal: React.FC<MediaModalProps> = ({
         .then((res) => setSeerStatus(res))
         .catch(() => {});
 
+      const releaseYear = details.release_date ? new Date(details.release_date).getFullYear() : undefined;
+      const tvdbId = (details as any).external_ids?.tvdb_id;
+
       // Charger le statut Sonarr / Radarr
       if (mediaType === 'movie') {
         api.checkRadarrMovie(id)
           .then((res) => setArrStatus(res))
           .catch(() => {});
       } else {
-        api.checkSonarrSeries(details.title)
+        api.checkSonarrSeries(details.title, tvdbId)
           .then((res) => setArrStatus(res))
           .catch(() => {});
       }
 
-      // Vérifier si présent dans Jellyfin
-      api.checkJellyfinMedia(mediaType, id, details.title)
+      // Vérifier si présent dans Jellyfin (avec titre et année pour vérification stricte)
+      api.checkJellyfinMedia(mediaType, id, details.title, releaseYear)
         .then((res) => setJellyfinItem(res))
         .catch(() => {});
     } catch (err) {

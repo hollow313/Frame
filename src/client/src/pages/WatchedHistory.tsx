@@ -449,7 +449,7 @@ export const WatchedHistory: React.FC<WatchedHistoryProps> = ({
                 <span className="px-2 py-0.5 rounded-md bg-emerald-500/15 border border-emerald-500/30 text-[10px] font-extrabold uppercase tracking-wider text-emerald-400">
                   STATISTIQUES SIMKL & FRAME
                 </span>
-                <span className="text-xs text-slate-400 font-semibold">• All time in review</span>
+                <span className="text-xs text-slate-400 font-semibold">• Bilan global</span>
               </div>
               <h2 className="text-xl sm:text-2xl font-black text-white flex items-center gap-2 tracking-tight">
                 <span>
@@ -501,10 +501,10 @@ export const WatchedHistory: React.FC<WatchedHistoryProps> = ({
                   
                   <div>
                     <span className="text-emerald-400 font-black tracking-widest text-lg sm:text-2xl block uppercase">
-                      SPENT
+                      TEMPS PASSÉ
                     </span>
                     <span className="text-slate-400 text-xs font-bold uppercase tracking-wider block mt-1">
-                      WATCHING TV SHOWS, ANIME & MOVIES
+                      DEVANT VOS SÉRIES, ANIMÉS & FILMS
                     </span>
 
                     {/* Grands Chiffres Jours : Heures : Minutes */}
@@ -664,7 +664,7 @@ export const WatchedHistory: React.FC<WatchedHistoryProps> = ({
                   {/* KPI 9 : Backlog (À Voir) */}
                   <div className="p-3.5 rounded-2xl bg-dark-850/70 border border-white/5 flex flex-col justify-between">
                     <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400">
-                      À VOIR (BACKLOG)
+                      À VOIR (EN ATTENTE)
                     </span>
                     <div className="my-1.5 flex items-baseline gap-1">
                       <span className="text-2xl font-black text-primary-400">{stats.backlogDays}</span>
@@ -687,7 +687,7 @@ export const WatchedHistory: React.FC<WatchedHistoryProps> = ({
                       365 JOURS, CARTOGRAPHIÉS
                     </span>
                     <h3 className="text-xl font-black text-white flex items-center gap-2">
-                      <span>One <span className="text-emerald-400">square</span>, one day.</span>
+                      <span>Une <span className="text-emerald-400">case</span>, un jour.</span>
                     </h3>
                     <p className="text-xs text-slate-400 mt-0.5">
                       Vos 12 derniers mois de visionnage • Chaque session de lecture dans l'année.
@@ -804,7 +804,7 @@ export const WatchedHistory: React.FC<WatchedHistoryProps> = ({
                         <span className="text-2xl font-black text-white">{stats.currentStreak}</span>
                         <span className="text-xs font-bold text-slate-400 uppercase">JOURS</span>
                       </div>
-                      <span className="text-[11px] text-slate-400">Série en cours (Watch Streak)</span>
+                      <span className="text-[11px] text-slate-400">Série en cours (Jours consécutifs)</span>
                     </div>
                   </div>
 
@@ -879,10 +879,10 @@ export const WatchedHistory: React.FC<WatchedHistoryProps> = ({
 
                     <div>
                       <h4 className="text-sm font-black uppercase tracking-wider text-blue-400">
-                        WATCHED TV
+                        SÉRIES TV VISIONNÉES
                       </h4>
                       <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400 block mt-0.5">
-                        TOTAL SPENT WATCHING
+                        TEMPS TOTAL DE VISIONNAGE
                       </span>
 
                       {/* Grands Chiffres */}
@@ -948,10 +948,10 @@ export const WatchedHistory: React.FC<WatchedHistoryProps> = ({
 
                     <div>
                       <h4 className="text-sm font-black uppercase tracking-wider text-amber-400">
-                        WATCHED ANIME
+                        ANIMÉS VISIONNÉS
                       </h4>
                       <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400 block mt-0.5">
-                        TOTAL SPENT WATCHING
+                        TEMPS TOTAL DE VISIONNAGE
                       </span>
 
                       {/* Grands Chiffres */}
@@ -1017,10 +1017,10 @@ export const WatchedHistory: React.FC<WatchedHistoryProps> = ({
 
                     <div>
                       <h4 className="text-sm font-black uppercase tracking-wider text-pink-400">
-                        WATCHED MOVIES
+                        FILMS VISIONNÉS
                       </h4>
                       <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400 block mt-0.5">
-                        TOTAL SPENT WATCHING
+                        TEMPS TOTAL DE VISIONNAGE
                       </span>
 
                       {/* Grands Chiffres */}
@@ -1081,7 +1081,7 @@ export const WatchedHistory: React.FC<WatchedHistoryProps> = ({
                 <div className="flex flex-wrap items-center justify-between gap-4">
                   <div>
                     <h3 className="text-xl font-black text-white flex items-center gap-2">
-                      <span>Your top <span className="text-amber-400">genres</span></span>
+                      <span>Vos genres <span className="text-amber-400">favoris</span></span>
                     </h3>
                     <p className="text-xs text-slate-400 mt-0.5">
                       Classés par titres vus ou temps passé :
@@ -1162,7 +1162,7 @@ export const WatchedHistory: React.FC<WatchedHistoryProps> = ({
               <div className="p-6 rounded-3xl bg-dark-900 border border-white/5 space-y-6">
                 <div>
                   <h3 className="text-xl font-black text-white flex items-center gap-2">
-                    <span>Your most-watched <span className="text-amber-400">directors</span></span>
+                    <span>Vos réalisateurs <span className="text-amber-400">les plus vus</span></span>
                   </h3>
                   <p className="text-xs text-slate-400 mt-0.5">
                     Les cinéastes vers lesquels vous revenez sans cesse.
@@ -1259,7 +1259,7 @@ export const WatchedHistory: React.FC<WatchedHistoryProps> = ({
                       <div className="flex flex-wrap items-center justify-between gap-3">
                         <div>
                           <h3 className="text-lg font-black text-white flex items-center gap-2">
-                            <span>Your month, <span className="text-amber-400">recapped</span></span>
+                            <span>Votre mois, <span className="text-amber-400">récapitulé</span></span>
                           </h3>
                           <p className="text-[11px] text-slate-400 mt-0.5">
                             Bilan de votre temps de visionnage mensuel
@@ -1370,7 +1370,7 @@ export const WatchedHistory: React.FC<WatchedHistoryProps> = ({
                       <div className="flex flex-wrap items-center justify-between gap-3">
                         <div>
                           <h3 className="text-lg font-black text-white flex items-center gap-2">
-                            <span>Your week, <span className="text-amber-400">recapped</span></span>
+                            <span>Votre semaine, <span className="text-amber-400">récapitulée</span></span>
                           </h3>
                           <p className="text-[11px] text-slate-400 mt-0.5">
                             Bilan de votre temps de visionnage hebdomadaire

@@ -194,7 +194,8 @@ export const api = {
 
   // ==================== SONARR & RADARR ====================
   getArrStatus: () => request<{ sonarr: any; radarr: any }>('/sonarr/status'),
-  checkSonarrSeries: (title: string) => request<ArrStatus>(`/sonarr/check/series?title=${encodeURIComponent(title)}`),
+  checkSonarrSeries: (title: string, tvdbId?: number) =>
+    request<ArrStatus>(`/sonarr/check/series?title=${encodeURIComponent(title)}${tvdbId ? `&tvdbId=${tvdbId}` : ''}`),
   checkRadarrMovie: (tmdbId: number) => request<ArrStatus>(`/sonarr/check/movie/${tmdbId}`),
   syncSonarrUnmonitored: () =>
     request<{ success: boolean; importedShows: number; importedAnime: number; totalImported: number; titles: string[]; message: string }>(
@@ -246,10 +247,15 @@ export const api = {
   unlinkJellyfin: () => request<{ success: boolean; message: string }>('/jellyfin/unlink', { method: 'POST' }),
   syncJellyfin: () => request<{ success: boolean; message: string; result: any }>('/jellyfin/sync', { method: 'POST' }),
   getJellyfinNowPlaying: () => request<{ active: boolean; items: any[] }>('/jellyfin/now-playing'),
-  checkJellyfinMedia: (mediaType: 'movie' | 'tv', tmdbId: number, title?: string) =>
-    request<{ inJellyfin: boolean; itemId?: string; name?: string; serverUrl?: string }>(
-      `/jellyfin/check/${mediaType}/${tmdbId}${title ? `?title=${encodeURIComponent(title)}` : ''}`
-    ),
+  checkJellyfinMedia: (mediaType: 'movie' | 'tv', tmdbId: number, title?: string, year?: number) => {
+    const params = new URLSearchParams();
+    if (title) params.append('title', title);
+    if (year) params.append('year', year.toString());
+    const qs = params.toString();
+    return request<{ inJellyfin: boolean; itemId?: string; name?: string; serverUrl?: string }>(
+      `/jellyfin/check/${mediaType}/${tmdbId}${qs ? `?${qs}` : ''}`
+    );
+  },
 
   // ==================== SETTINGS (ADMIN) ====================
   getSettings: () => request<Record<string, { configured: boolean; value?: string }>>('/settings'),

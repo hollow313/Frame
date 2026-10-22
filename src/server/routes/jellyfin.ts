@@ -31,6 +31,7 @@ router.get('/check/:mediaType/:tmdbId', async (req: AuthenticatedRequest, res: R
     const userId = req.user!.id;
     const { mediaType, tmdbId } = req.params;
     const title = req.query.title as string | undefined;
+    const year = req.query.year ? parseInt(req.query.year as string, 10) : undefined;
 
     const userStmt = db.prepare('SELECT jellyfin_user_id, jellyfin_access_token, jellyfin_server_url FROM users WHERE id = ?');
     const user = userStmt.get(userId) as any;
@@ -46,7 +47,8 @@ router.get('/check/:mediaType/:tmdbId', async (req: AuthenticatedRequest, res: R
       parseInt(tmdbId, 10),
       title,
       mediaType as 'movie' | 'tv',
-      user.jellyfin_server_url
+      user.jellyfin_server_url,
+      year
     );
 
     res.json({

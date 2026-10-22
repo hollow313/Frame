@@ -706,6 +706,11 @@ export const Settings: React.FC = () => {
                 className="w-full bg-dark-850 border border-white/10 rounded-xl px-3.5 py-2 text-sm text-slate-100 focus:outline-none focus:border-primary-500 cursor-pointer"
               >
                 <option value="">Par défaut (Admin - Clé API)</option>
+                {seerDefaultUserId && !seerUsers.some((u) => u.id.toString() === seerDefaultUserId) && (
+                  <option value={seerDefaultUserId}>
+                    Utilisateur sélectionné (ID: {seerDefaultUserId})
+                  </option>
+                )}
                 {seerUsers.map((u) => (
                   <option key={u.id} value={u.id.toString()}>
                     {u.displayName || u.username || `Utilisateur #${u.id}`} (ID: {u.id})

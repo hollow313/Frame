@@ -74,9 +74,9 @@ export class ArrService {
   }
 
   /**
-   * Rechercher une série dans Sonarr par titre ou lookup
+   * Rechercher une série dans Sonarr par titre ou lookup (correspondance stricte)
    */
-  public static async checkSonarrSeries(title: string): Promise<ArrMediaStatus> {
+  public static async checkSonarrSeries(title: string, tvdbId?: number): Promise<ArrMediaStatus> {
     if (!this.isSonarrConfigured() || !title) {
       return { inLibrary: false, downloaded: false, monitored: false };
     }
@@ -92,8 +92,25 @@ export class ArrService {
         return { inLibrary: false, downloaded: false, monitored: false };
       }
 
-      // Trouver la série correspondante
-      const found = results[0];
+      const cleanTitle = (s: string) =>
+        s.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]/g, '').trim();
+
+      const normalizedTarget = cleanTitle(title);
+
+      // Trouver la série correspondante strictement
+      let found = results.find((r) => tvdbId && r.tvdbId === tvdbId);
+      if (!found) {
+        found = results.find((r) => {
+          const tNorm = r.title ? cleanTitle(r.title) : '';
+          const origNorm = r.originalTitle ? cleanTitle(r.originalTitle) : '';
+          return (tNorm.length > 0 && tNorm === normalizedTarget) || (origNorm.length > 0 && origNorm === normalizedTarget);
+        });
+      }
+
+      if (!found) {
+        return { inLibrary: false, downloaded: false, monitored: false };
+      }
+
       const inLibrary = Boolean(found.id && found.id > 0);
       const downloaded = Boolean(found.statistics && found.statistics.percentOfEpisodes === 100);
 
