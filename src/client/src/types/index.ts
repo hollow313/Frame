@@ -52,6 +52,8 @@ export interface MediaItem {
     episode_number: number;
     season_number: number;
   };
+  series_status?: string;
+  seasons_count?: number;
   isWatched?: boolean;
   watched_at?: string | null;
   userRating?: number | null;
@@ -122,6 +124,15 @@ export interface WatchlistItem {
     season_number: number;
     overview?: string;
   };
+  last_episode_to_air?: {
+    id: number;
+    name: string;
+    air_date: string;
+    episode_number: number;
+    season_number: number;
+  };
+  series_status?: string;
+  seasons_count?: number;
 }
 
 export interface RecommendationSection {

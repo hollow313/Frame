@@ -83,8 +83,17 @@ export const api = {
     request<MediaItem>(`/tmdb/${mediaType}/${id}`),
   getTvSeason: (tvId: number, seasonNumber: number) =>
     request<TvSeason>(`/tmdb/tv/${tvId}/season/${seasonNumber}`),
-  getUpcomingMedia: (type: 'all' | 'movie' | 'tv' | 'anime' = 'all', page: number = 1) =>
-    request<{ results: MediaItem[]; total_pages: number }>(`/tmdb/upcoming?type=${type}&page=${page}`),
+  getUpcomingMedia: (
+    type: 'all' | 'movie' | 'tv' | 'anime' = 'all',
+    page: number = 1,
+    startDate?: string,
+    endDate?: string
+  ) => {
+    const params = new URLSearchParams({ type, page: page.toString() });
+    if (startDate) params.append('startDate', startDate);
+    if (endDate) params.append('endDate', endDate);
+    return request<{ results: MediaItem[]; total_pages: number }>(`/tmdb/upcoming?${params.toString()}`);
+  },
   discoverByGenre: (type: 'movie' | 'tv', genreId: number, page: number = 1) =>
     request<{ results: MediaItem[]; total_pages: number }>(`/tmdb/discover?type=${type}&genreId=${genreId}&page=${page}`),
   discoverByProvider: (type: 'movie' | 'tv', providerId: number, genreId?: number, page: number = 1, recentOnly: boolean = false) =>

@@ -120,7 +120,9 @@ router.get('/upcoming', async (req: AuthenticatedRequest, res: Response) => {
   try {
     const type = (req.query.type as 'all' | 'movie' | 'tv' | 'anime') || 'all';
     const page = parseInt(req.query.page as string, 10) || 1;
-    const data = await TMDBService.getUpcomingReleases(type, page);
+    const startDate = req.query.startDate as string | undefined;
+    const endDate = req.query.endDate as string | undefined;
+    const data = await TMDBService.getUpcomingReleases(type, page, startDate, endDate);
     data.results = annotateWithUserData(data.results, req.user?.id);
     res.json(data);
   } catch (err: any) {

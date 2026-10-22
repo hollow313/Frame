@@ -226,7 +226,7 @@ router.delete('/watchlist/:mediaType/:tmdbId', (req: AuthenticatedRequest, res: 
 });
 
 // Obtenir la watchlist
-router.get('/watchlist', (req: AuthenticatedRequest, res: Response) => {
+router.get('/watchlist', async (req: AuthenticatedRequest, res: Response) => {
   try {
     const userId = req.user!.id;
     const type = req.query.type as string;
@@ -245,26 +245,43 @@ router.get('/watchlist', (req: AuthenticatedRequest, res: Response) => {
     const items = stmt.all(...params) as any[];
     const cacheStmt = db.prepare('SELECT data FROM media_cache WHERE tmdb_id = ? AND media_type = ?');
 
-    const parsed = items.map((item) => {
-      let nextEp: any = undefined;
-      if (item.media_type === 'tv' && item.tmdb_id) {
-        try {
-          const cached = cacheStmt.get(item.tmdb_id, 'tv') as any;
-          if (cached?.data) {
-            const parsedCache = JSON.parse(cached.data);
-            if (parsedCache.next_episode_to_air) {
-              nextEp = parsedCache.next_episode_to_air;
-            }
-          }
-        } catch {}
-      }
+    const parsed = await Promise.all(
+      items.map(async (item) => {
+        let nextEp: any = undefined;
+        let lastEp: any = undefined;
+        let seriesStatus: string | undefined = undefined;
+        let seasonsCount: number | undefined = undefined;
 
-      return {
-        ...item,
-        genres: item.genres ? JSON.parse(item.genres) : [],
-        next_episode_to_air: nextEp,
-      };
-    });
+        if (item.media_type === 'tv' && item.tmdb_id) {
+          try {
+            let details: any = null;
+            const cached = cacheStmt.get(item.tmdb_id, 'tv') as any;
+            if (cached?.data) {
+              details = JSON.parse(cached.data);
+            }
+            if (!details) {
+              details = await TMDBService.getDetails('tv', item.tmdb_id);
+            }
+
+            if (details) {
+              nextEp = details.next_episode_to_air || undefined;
+              lastEp = details.last_episode_to_air || undefined;
+              seriesStatus = details.status;
+              seasonsCount = details.number_of_seasons;
+            }
+          } catch {}
+        }
+
+        return {
+          ...item,
+          genres: item.genres ? JSON.parse(item.genres) : [],
+          next_episode_to_air: nextEp,
+          last_episode_to_air: lastEp,
+          series_status: seriesStatus,
+          seasons_count: seasonsCount,
+        };
+      })
+    );
 
     res.json(parsed);
   } catch (err: any) {

@@ -500,52 +500,71 @@ export class TMDBService {
   }
 
   /**
-   * Obtenir les prochaines sorties (style calendrier Sonarr/Radarr)
+   * Obtenir les prochaines sorties (style calendrier Sonarr/Radarr) avec filtre par période
    */
   public static async getUpcomingReleases(
     type: 'all' | 'movie' | 'tv' | 'anime' = 'all',
-    page: number = 1
+    page: number = 1,
+    startDate?: string,
+    endDate?: string
   ): Promise<{ results: TMDBMediaItem[]; total_pages: number }> {
     const results: TMDBMediaItem[] = [];
     const todayStr = new Date().toISOString().split('T')[0];
-    const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+    const defaultEndStr = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+    const filterStart = startDate || todayStr;
+    const filterEnd = endDate || defaultEndStr;
 
-    // 1. FILMS À VENIR
+    // 1. FILMS À VENIR DANS LA PÉRIODE
     if (type === 'all' || type === 'movie') {
       try {
-        const moviesData = await this.request<{ results: any[] }>('/movie/upcoming', {
+        const discoverMovies = await this.request<{ results: any[] }>('/discover/movie', {
+          'primary_release_date.gte': filterStart,
+          'primary_release_date.lte': filterEnd,
           region: 'FR',
+          sort_by: 'popularity.desc',
           page: page.toString(),
         });
-        const normalizedMovies = (moviesData.results || []).map((m) =>
+        const normalizedMovies = (discoverMovies.results || []).map((m) =>
           this.normalizeMedia({ ...m, media_type: 'movie' })
         );
         results.push(...normalizedMovies);
       } catch {}
+
+      // Compléter avec upcoming si nécessaire
+      if (results.length < 8 && filterStart <= todayStr) {
+        try {
+          const moviesData = await this.request<{ results: any[] }>('/movie/upcoming', {
+            region: 'FR',
+            page: page.toString(),
+          });
+          const normalizedUpcoming = (moviesData.results || []).map((m) =>
+            this.normalizeMedia({ ...m, media_type: 'movie' })
+          );
+          results.push(...normalizedUpcoming);
+        } catch {}
+      }
     }
 
-    // 2. SÉRIES TV ACTUELLEMENT EN DIFFUSION OU À VENIR
+    // 2. SÉRIES TV AVEC DIFFUSIONS DANS LA PÉRIODE
     if (type === 'all' || type === 'tv') {
       try {
-        // Séries diffusant des épisodes en ce moment (on the air)
-        const tvData = await this.request<{ results: any[] }>('/tv/on_the_air', {
+        const tvData = await this.request<{ results: any[] }>('/discover/tv', {
+          'air_date.gte': filterStart,
+          'air_date.lte': filterEnd,
+          sort_by: 'popularity.desc',
           page: page.toString(),
         });
-        const normalizedTv = (tvData.results || []).map((t) => {
-          const item = this.normalizeMedia({ ...t, media_type: 'tv' });
-          // Si la série a débuté avant aujourd'hui, elle diffuse des épisodes cette semaine
-          if (!item.release_date || item.release_date < todayStr) {
-            item.release_date = todayStr;
-          }
-          return item;
-        });
+        const normalizedTv = (tvData.results || []).map((t) =>
+          this.normalizeMedia({ ...t, media_type: 'tv' })
+        );
         results.push(...normalizedTv);
       } catch {}
 
       try {
-        // Nouvelles séries démarrant prochainement
+        // Nouvelles séries débutant dans la période
         const newTvData = await this.request<{ results: any[] }>('/discover/tv', {
-          'first_air_date.gte': todayStr,
+          'first_air_date.gte': filterStart,
+          'first_air_date.lte': filterEnd,
           sort_by: 'popularity.desc',
           page: page.toString(),
         });
@@ -556,25 +575,21 @@ export class TMDBService {
       } catch {}
     }
 
-    // 3. MANGAS & ANIMÉS (En cours de diffusion ou à venir)
+    // 3. MANGAS & ANIMÉS (En cours de diffusion ou à venir dans la période)
     if (type === 'all' || type === 'anime') {
       try {
         const animeTv = await this.request<{ results: any[] }>('/discover/tv', {
           with_genres: '16',
           with_original_language: 'ja',
           without_genres: '10762,10751',
-          'air_date.gte': sevenDaysAgo,
+          'air_date.gte': filterStart,
+          'air_date.lte': filterEnd,
           sort_by: 'popularity.desc',
           page: page.toString(),
-          'vote_count.gte': '10',
         });
-        const normalizedAnimeTv = (animeTv.results || []).map((t) => {
-          const item = this.normalizeMedia({ ...t, media_type: 'tv' });
-          if (!item.release_date || item.release_date < todayStr) {
-            item.release_date = todayStr;
-          }
-          return item;
-        });
+        const normalizedAnimeTv = (animeTv.results || []).map((t) =>
+          this.normalizeMedia({ ...t, media_type: 'tv' })
+        );
         results.push(...normalizedAnimeTv);
       } catch {}
 
@@ -583,10 +598,10 @@ export class TMDBService {
           with_genres: '16',
           with_original_language: 'ja',
           without_genres: '10751',
-          'primary_release_date.gte': sevenDaysAgo,
+          'primary_release_date.gte': filterStart,
+          'primary_release_date.lte': filterEnd,
           sort_by: 'popularity.desc',
           page: page.toString(),
-          'vote_count.gte': '5',
         });
         const normalizedAnimeMovies = (animeMovies.results || []).map((m) =>
           this.normalizeMedia({ ...m, media_type: 'movie' })
@@ -604,10 +619,10 @@ export class TMDBService {
       return true;
     });
 
-    // Filtrer pour ne garder que les sorties >= à il y a 7 jours
+    // Filtrer strictement pour ne garder que les sorties dans l'intervalle [filterStart, filterEnd]
     const upcomingFiltered = uniqueResults.filter((item) => {
       const d = item.release_date;
-      return Boolean(d && d >= sevenDaysAgo);
+      return Boolean(d && d >= filterStart && d <= filterEnd);
     });
 
     // Trier chronologiquement (de la sortie la plus proche à la plus lointaine)
