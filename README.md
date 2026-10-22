@@ -4,6 +4,7 @@
 
 ### Plateforme moderne de suivi de médias, recommandations intelligentes & intégrations serveur
 
+[![Docker Hub](https://img.shields.io/badge/Docker%20Hub-hollow313%2Fframe-0db7ed?logo=docker&logoColor=white)](https://hub.docker.com/r/hollow313/frame)
 [![Docker Alpine](https://img.shields.io/badge/Container-Alpine%20Linux-2496ED?logo=docker&logoColor=white)](#déploiement-docker)
 [![Node.js 22](https://img.shields.io/badge/Node.js-22%20LTS-339933?logo=node.js&logoColor=white)](#architecture)
 [![SQLite WAL](https://img.shields.io/badge/Database-SQLite%20WAL-003B57?logo=sqlite&logoColor=white)](#architecture)
@@ -49,10 +50,7 @@ Créez un dossier pour Frame sur votre serveur et placez-y le fichier `docker-co
 ```yaml
 services:
   frame:
-    image: frame:latest
-    build:
-      context: .
-      dockerfile: Dockerfile
+    image: hollow313/frame:latest
     container_name: frame
     restart: unless-stopped
     ports:
@@ -164,6 +162,17 @@ npm start
 - **Mots de passe hachés** : Utilisant `bcrypt` avec salage à 10 tours.
 - **Sessions chiffrées** : Jetons JWT sécurisés transmis via en-têtes d'autorisation et cookies HTTP-only.
 - **Isolation utilisateur** : UID `568` / GID `568` pour correspondre aux permissions de stockage sécurisées sur votre serveur.
+
+---
+
+## 🤖 Intégration Continue (CI/CD GitHub Actions -> Docker Hub)
+
+Le dépôt inclut un workflow GitHub Actions automatisé (`.github/workflows/docker.yml`) qui compile et publie l'image multi-plateformes (`linux/amd64`, `linux/arm64`) vers Docker Hub à chaque push sur la branche `main`.
+
+### Configuration des Secrets GitHub
+Pour activer la publication automatique, ajoutez ces 2 secrets dans les paramètres de votre dépôt GitHub (**Settings** > **Secrets and variables** > **Actions**) :
+- `DOCKERHUB_USERNAME` : Votre identifiant Docker Hub (ex: `hollow313`)
+- `DOCKERHUB_TOKEN` : Votre Personal Access Token Docker Hub (généré sur [hub.docker.com](https://hub.docker.com/settings/security) avec droits Read/Write/Delete)
 
 ---
 

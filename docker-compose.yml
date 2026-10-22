@@ -1,9 +1,8 @@
 services:
   frame:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    image: frame:latest
+    image: hollow313/frame:latest
+    # Pour compiler localement au lieu d'utiliser l'image Docker Hub, décommentez la ligne build :
+    # build: .
     container_name: frame
     restart: unless-stopped
     ports:
@@ -14,7 +13,7 @@ services:
       - TZ=Europe/Paris
       - PORT=30017
       - NODE_ENV=production
-      # Les variables suivantes peuvent être définies ici ou directement dans l'interface d'administration :
+      # Les variables suivantes peuvent être configurées ici ou via l'interface d'administration :
       # - TMDB_API_KEY=votre_cle_api_tmdb
       # - SEER_URL=http://serveur:5055
       # - SEER_API_KEY=votre_cle_api_seer
