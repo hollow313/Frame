@@ -1,0 +1,30 @@
+services:
+  frame:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: frame:latest
+    container_name: frame
+    restart: unless-stopped
+    ports:
+      - "30017:30017"
+    environment:
+      - PUID=568
+      - PGID=568
+      - TZ=Europe/Paris
+      - PORT=30017
+      - NODE_ENV=production
+      # Les variables suivantes peuvent être définies ici ou directement dans l'interface d'administration :
+      # - TMDB_API_KEY=votre_cle_api_tmdb
+      # - SEER_URL=http://serveur:5055
+      # - SEER_API_KEY=votre_cle_api_seer
+      # - SONARR_URL=http://serveur:8989
+      # - SONARR_API_KEY=votre_cle_api_sonarr
+      # - RADARR_URL=http://serveur:7878
+      # - RADARR_API_KEY=votre_cle_api_radarr
+      # - SIMKL_CLIENT_ID=votre_client_id_simkl
+      # - SIMKL_CLIENT_SECRET=votre_client_secret_simkl
+      # - JWT_SECRET=changez_cette_cle_secrete_en_production
+    volumes:
+      - ./data:/app/data
+      - ./config:/app/config
