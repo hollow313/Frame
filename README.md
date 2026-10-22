@@ -10,7 +10,7 @@
 [![SQLite WAL](https://img.shields.io/badge/Database-SQLite%20WAL-003B57?logo=sqlite&logoColor=white)](#architecture)
 [![Tailwind Dark](https://img.shields.io/badge/Design-Mode%20Nuit%20Cinéma-06B6D4?logo=tailwindcss&logoColor=white)](#interface--fonctionnalités)
 [![Language](https://img.shields.io/badge/Langue-Français%20(fr--FR)-blue)](#fonctionnalités-clés)
-[![License](https://img.shields.io/badge/License-MIT-purple.svg)](#license)
+[![License](https://img.shields.io/badge/License-Propriétaire%20Non--Commercial-red.svg)](#licence)
 
 <br/>
 
@@ -132,13 +132,25 @@ Pour connecter votre compte Simkl sans tracas et importer vos listes :
 3. Cliquez sur le bouton **« Save App »**.
 4. Simkl affiche votre **Client ID** et votre **Client Secret**. Conservez-les précieusement.
 
-#### Étape 2 : Lier votre compte dans Frame (Connexion 1-clic)
-1. Dans Frame, allez dans **Paramètres** > onglet **Mon Profil, Simkl & Jellyfin**.
-2. Dans la section **Connexion Simkl**, collez votre **Client ID** et votre **Client Secret**.
-3. Cliquez sur le bouton violet **« Se connecter avec Simkl (OAuth 2.0) »**.
-4. La page de consentement Simkl s'ouvre : cliquez sur **Autoriser / Approve**.
-5. Vous êtes automatiquement redirigé vers Frame et connecté avec succès !
-6. Cliquez sur **« Synchroniser mes vues maintenant »** : tous vos films et séries visionnés sont instantanément importés.
+#### Étape 2 : Lier votre compte dans Frame
+
+Deux méthodes simples sont disponibles selon votre réseau :
+
+- **Méthode A (Redirection automatique vers votre serveur)** :
+  1. Si vous avez renseigné l'URL de votre serveur (ex: `http://<IP_DU_SERVEUR>:30018/settings`) dans Simkl.
+  2. Dans Frame, collez votre **Client ID** et votre **Client Secret**.
+  3. Cliquez sur **« Se connecter automatiquement (Redirection) »**.
+  4. Autorisez Frame sur Simkl : vous êtes redirigé et connecté instantanément !
+
+- **Méthode B (Si votre serveur utilise une IP locale privée ou si vous avez mis https://simkl.com)** :
+  1. Dans Simkl Developer, définissez le **Redirect URI** sur `https://simkl.com`.
+  2. Dans Frame, sélectionnez le raccourci `https://simkl.com` dans l'URL de redirection.
+  3. Cliquez sur **« 1. Ouvrir l'autorisation (Nouvel onglet) »**.
+  4. Acceptez sur Simkl : votre navigateur affiche alors `https://simkl.com/?code=...`.
+  5. Copiez simplement cette URL ou le code affiché dans votre barre d'adresse, collez-la dans Frame dans le champ prévu et cliquez sur **« Valider le code Simkl »** !
+  6. Votre compte est instantanément connecté !
+
+Une fois connecté, cliquez sur **« Synchroniser mes vues maintenant »** : tous vos films et séries visionnés sont automatiquement importés dans Frame.
 
 > 💡 **Important** : Le Client Secret (qui commence par `simkl_cs_`) n'est pas un jeton d'accès utilisateur. Ne le collez pas dans le champ Jeton d'accès direct, mais bien dans le champ Client Secret du formulaire de connexion OAuth.
 > 📺 **Mode PIN alternatif** : Pour les appareils sans navigateur ou Smart TV, vous pouvez également utiliser l'option *« Connexion par code PIN »* pour valider un code court à 8 caractères sur `simkl.com/pin`.
@@ -284,4 +296,9 @@ npm start
 
 ## 📄 Licence
 
-Ce projet est distribué sous licence [MIT](LICENSE).
+Ce projet est distribué sous **Licence Propriétaire Non-Commerciale**.
+- **Usage strictement personnel & privé** : Vous êtes libre d'héberger et d'utiliser Frame pour votre propre usage privé.
+- **Interdiction commerciale** : Toute revente, monétisation ou exploitation commerciale est strictement interdite.
+- **Interdiction de modification & redistribution** : La modification du code et la distribution de versions dérivées sont formellement interdites sans l'accord écrit de l'auteur.
+
+Consultez le fichier [LICENSE](LICENSE) pour l'intégralité des termes et conditions.

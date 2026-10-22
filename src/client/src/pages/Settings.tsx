@@ -57,6 +57,8 @@ export const Settings: React.FC = () => {
   const [copiedRedirect, setCopiedRedirect] = useState(false);
   const [simklConnectingOAuth, setSimklConnectingOAuth] = useState(false);
   const [simklOAuthError, setSimklOAuthError] = useState<string | null>(null);
+  const [simklPastedCode, setSimklPastedCode] = useState('');
+  const [validatingPastedCode, setValidatingPastedCode] = useState(false);
   const [simklDeviceCode, setSimklDeviceCode] = useState<string | null>(null);
   const [simklPinData, setSimklPinData] = useState<{ user_code: string; verification_url: string; device_code?: string } | null>(null);
   const [simklGeneratingPin, setSimklGeneratingPin] = useState(false);
@@ -229,7 +231,7 @@ export const Settings: React.FC = () => {
   };
 
   // ================= SIMKL OAUTH & PIN FLOW =================
-  const handleStartSimklOAuth = async () => {
+  const handleStartSimklOAuth = async (inNewTab = false) => {
     if (!userSimklClientId.trim()) {
       setSimklOAuthError('Veuillez renseigner votre Client ID Simkl avant de vous connecter.');
       return;
@@ -252,10 +254,49 @@ export const Settings: React.FC = () => {
         localStorage.setItem('simkl_oauth_client_secret', userSimklClientSecret.trim());
       }
 
-      window.location.href = res.authUrl;
+      if (inNewTab) {
+        window.open(res.authUrl, '_blank');
+      } else {
+        window.location.href = res.authUrl;
+      }
     } catch (err: any) {
       setSimklOAuthError(err.message || 'Erreur lors de l\'initialisation OAuth');
+    } finally {
       setSimklConnectingOAuth(false);
+    }
+  };
+
+  const handleValidatePastedCode = async () => {
+    if (!simklPastedCode.trim()) {
+      setSimklOAuthError('Veuillez coller le code d\'autorisation ou l\'URL de redirection reçue.');
+      return;
+    }
+    setValidatingPastedCode(true);
+    setSimklOAuthError(null);
+    try {
+      const verifier = localStorage.getItem('simkl_oauth_verifier') || undefined;
+      const redirectUri = simklRedirectUri.trim() || localStorage.getItem('simkl_oauth_redirect_uri') || 'https://simkl.com';
+      const clientId = userSimklClientId.trim() || localStorage.getItem('simkl_oauth_client_id') || undefined;
+      const clientSecret = userSimklClientSecret.trim() || localStorage.getItem('simkl_oauth_client_secret') || undefined;
+
+      const res = await api.callbackSimklOAuth({
+        code: simklPastedCode.trim(),
+        codeVerifier: verifier,
+        redirectUri,
+        clientId,
+        clientSecret,
+      });
+
+      alert(res.message || 'Compte Simkl lié avec succès !');
+      setSimklPastedCode('');
+      localStorage.removeItem('simkl_oauth_verifier');
+      localStorage.removeItem('simkl_oauth_state');
+      localStorage.removeItem('simkl_oauth_redirect_uri');
+      await refreshUser();
+    } catch (err: any) {
+      setSimklOAuthError(err.message || 'Erreur lors de la validation du code Simkl');
+    } finally {
+      setValidatingPastedCode(false);
     }
   };
 
@@ -1093,6 +1134,25 @@ export const Settings: React.FC = () => {
                         {copiedRedirect ? '✓ Copié !' : 'Copier l\'URL'}
                       </button>
                     </div>
+
+                    {/* Raccourcis d'URL de redirection */}
+                    <div className="flex flex-wrap items-center gap-2 mt-2">
+                      <span className="text-[11px] text-slate-400">Raccourcis :</span>
+                      <button
+                        type="button"
+                        onClick={() => setSimklRedirectUri(`${window.location.origin}/settings`)}
+                        className="text-[11px] px-2.5 py-1 rounded-lg bg-dark-800 text-slate-300 hover:text-white border border-white/5"
+                      >
+                        Adresse de Frame ({window.location.origin}/settings)
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setSimklRedirectUri('https://simkl.com')}
+                        className="text-[11px] px-2.5 py-1 rounded-lg bg-dark-800 text-amber-300 hover:text-amber-200 border border-amber-500/20"
+                      >
+                        https://simkl.com (recommandé si IP locale)
+                      </button>
+                    </div>
                     <p className="text-[11px] text-slate-400 mt-1">
                       Assurez-vous que cette URL exacte est enregistrée dans les paramètres de votre application sur le site de Simkl.
                     </p>
@@ -1105,15 +1165,54 @@ export const Settings: React.FC = () => {
                     </div>
                   )}
 
-                  <button
-                    type="button"
-                    onClick={handleStartSimklOAuth}
-                    disabled={simklConnectingOAuth || !userSimklClientId.trim()}
-                    className="w-full sm:w-auto px-6 py-2.5 bg-gradient-to-r from-primary-600 to-indigo-600 hover:from-primary-500 hover:to-indigo-500 text-white text-xs font-bold rounded-xl shadow-glow transition-all hover:scale-105 disabled:opacity-50 flex items-center justify-center gap-2"
-                  >
-                    <RefreshCw className={`w-4 h-4 ${simklConnectingOAuth ? 'animate-spin' : ''}`} />
-                    <span>{simklConnectingOAuth ? 'Connexion à Simkl...' : 'Se connecter avec Simkl (OAuth 2.0)'}</span>
-                  </button>
+                  <div className="flex flex-wrap gap-2 pt-1">
+                    <button
+                      type="button"
+                      onClick={() => handleStartSimklOAuth(false)}
+                      disabled={simklConnectingOAuth || !userSimklClientId.trim()}
+                      className="px-5 py-2.5 bg-gradient-to-r from-primary-600 to-indigo-600 hover:from-primary-500 hover:to-indigo-500 text-white text-xs font-bold rounded-xl shadow-glow transition-all hover:scale-102 disabled:opacity-50 flex items-center justify-center gap-2"
+                    >
+                      <RefreshCw className={`w-4 h-4 ${simklConnectingOAuth ? 'animate-spin' : ''}`} />
+                      <span>Se connecter automatiquement (Redirection)</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => handleStartSimklOAuth(true)}
+                      disabled={simklConnectingOAuth || !userSimklClientId.trim()}
+                      className="px-4 py-2.5 bg-dark-800 hover:bg-dark-750 text-slate-200 hover:text-white text-xs font-bold rounded-xl border border-white/10 transition-all flex items-center justify-center gap-1.5"
+                    >
+                      <ExternalLink className="w-3.5 h-3.5 text-primary-400" />
+                      <span>1. Ouvrir l'autorisation (Nouvel onglet)</span>
+                    </button>
+                  </div>
+
+                  {/* Section de validation manuelle du code ou de l'URL */}
+                  <div className="p-3.5 rounded-xl bg-dark-900/80 border border-white/10 space-y-2 mt-3">
+                    <label className="text-xs font-bold text-slate-200 block">
+                      2. Si vous avez utilisé https://simkl.com ou une IP locale :
+                    </label>
+                    <p className="text-[11px] text-slate-400">
+                      Après avoir autorisé Frame sur Simkl, Simkl vous redirige vers une page avec le code dans l'adresse (ex: <code>https://simkl.com/?code=4a92c...</code>). Copiez cette URL ou ce code et collez-le ci-dessous :
+                    </p>
+                    <div className="flex flex-col sm:flex-row gap-2">
+                      <input
+                        type="text"
+                        value={simklPastedCode}
+                        onChange={(e) => setSimklPastedCode(e.target.value)}
+                        placeholder="Collez l'URL de redirection reçue ou le code..."
+                        className="flex-1 bg-dark-850 border border-white/10 rounded-xl px-3 py-2 text-xs text-slate-100 font-mono focus:outline-none focus:border-primary-500"
+                      />
+                      <button
+                        type="button"
+                        onClick={handleValidatePastedCode}
+                        disabled={validatingPastedCode || !simklPastedCode.trim()}
+                        className="px-4 py-2 bg-emerald-500 hover:bg-emerald-600 text-white text-xs font-bold rounded-xl shadow transition-all hover:scale-105 disabled:opacity-50 shrink-0"
+                      >
+                        {validatingPastedCode ? 'Validation...' : 'Valider le code Simkl'}
+                      </button>
+                    </div>
+                  </div>
                 </div>
 
                 {/* Option alternative : PIN Code / Device Flow */}

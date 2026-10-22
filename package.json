@@ -3,6 +3,7 @@
   "version": "1.0.0",
   "description": "Plateforme moderne de suivi de médias, recommandations personnalisées et intégrations Seer/Sonarr/Simkl",
   "main": "dist/server/index.js",
+  "license": "SEE LICENSE IN LICENSE",
   "type": "module",
   "scripts": {
     "dev": "tsx watch src/server/index.ts",

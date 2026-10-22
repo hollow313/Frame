@@ -84,6 +84,7 @@ export interface WatchedItem {
   watched_at: string;
   rating: number | null;
   review: string | null;
+  isAnime?: boolean;
 }
 
 export interface WatchlistItem {
@@ -115,12 +116,30 @@ export interface RecommendationResponse {
 }
 
 export interface UserStats {
+  totalWatched: number;
   moviesWatched: number;
   tvWatched: number;
-  totalWatched: number;
+  animeWatched: number;
+  totalHours: number;
+  moviesHours: number;
+  tvHours: number;
+  animeHours: number;
+
+  currentYear?: number;
+  thisYearWatchedCount?: number;
+  thisYearTotalHours?: number;
+  thisYearMoviesHours?: number;
+  thisYearTvHours?: number;
+  thisYearAnimeHours?: number;
+
   watchlistCount: number;
   averageRating: number | null;
-  estimatedHours: number;
+  ratingCount?: number;
+  ratingDistribution?: Record<number, number>;
+
+  topGenres?: { name: string; count: number; percentage: number }[];
+  timeline?: { key: string; label: string; count: number; movies: number; tv: number; anime: number }[];
+  estimatedHours?: number;
 }
 
 export interface User {

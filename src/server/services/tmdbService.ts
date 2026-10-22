@@ -285,6 +285,150 @@ export class TMDBService {
   }
 
   /**
+   * Découverte Unifiée avancée (Films, Séries, Mangas & Animés, avec filtres par plateforme, genre et récence)
+   */
+  public static async discoverUnified(options: {
+    type?: 'all' | 'movie' | 'tv' | 'anime';
+    animeType?: 'tv' | 'movie';
+    providerId?: number;
+    genreId?: number;
+    recentOnly?: boolean;
+    sortBy?: 'popularity.desc' | 'release_date.desc' | 'vote_average.desc';
+    page?: number;
+  }): Promise<{ results: TMDBMediaItem[]; total_pages: number }> {
+    const page = options.page || 1;
+    const type = options.type || 'all';
+    const recentOnly = options.recentOnly ?? false;
+
+    // CAS 1: Animés / Mangas (Animation Japonaise adulte/ado)
+    if (type === 'anime') {
+      const targetType = options.animeType || 'tv';
+      const endpoint = targetType === 'movie' ? '/discover/movie' : '/discover/tv';
+      const withoutGenres = targetType === 'movie' ? '10751' : '10762,10751';
+
+      const params: Record<string, string> = {
+        with_original_language: 'ja',
+        with_genres: options.genreId ? `16,${options.genreId}` : '16',
+        without_genres: withoutGenres,
+        page: page.toString(),
+        'vote_count.gte': '10',
+      };
+
+      if (options.sortBy) {
+        if (options.sortBy === 'release_date.desc') {
+          params.sort_by = targetType === 'movie' ? 'primary_release_date.desc' : 'first_air_date.desc';
+        } else {
+          params.sort_by = options.sortBy;
+        }
+      } else {
+        params.sort_by = 'popularity.desc';
+      }
+
+      if (options.providerId) {
+        let providerString = options.providerId.toString();
+        if (options.providerId === 9 || options.providerId === 119) providerString = '119|9';
+        params.watch_region = 'FR';
+        params.with_watch_providers = providerString;
+        params.with_watch_monetization_types = 'flatrate|free|ads';
+      }
+
+      if (recentOnly) {
+        const eighteenMonthsAgo = new Date(Date.now() - 540 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+        const nextMonth = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+        if (targetType === 'movie') {
+          params['primary_release_date.gte'] = eighteenMonthsAgo;
+          params['primary_release_date.lte'] = nextMonth;
+        } else {
+          params['first_air_date.gte'] = eighteenMonthsAgo;
+          params['first_air_date.lte'] = nextMonth;
+        }
+      }
+
+      const data = await this.request<{ results: any[]; total_pages: number }>(endpoint, params);
+      return {
+        results: data.results.map((item) => this.normalizeMedia({ ...item, media_type: targetType })),
+        total_pages: data.total_pages,
+      };
+    }
+
+    // CAS 2: Un type spécifique (Film ou Série)
+    if (type === 'movie' || type === 'tv') {
+      const endpoint = `/discover/${type}`;
+      const params: Record<string, string> = {
+        page: page.toString(),
+        'vote_count.gte': recentOnly ? '5' : '15',
+      };
+
+      if (options.sortBy) {
+        if (options.sortBy === 'release_date.desc') {
+          params.sort_by = type === 'movie' ? 'primary_release_date.desc' : 'first_air_date.desc';
+        } else {
+          params.sort_by = options.sortBy;
+        }
+      } else {
+        params.sort_by = recentOnly ? (type === 'movie' ? 'primary_release_date.desc' : 'first_air_date.desc') : 'popularity.desc';
+      }
+
+      if (options.genreId) {
+        params.with_genres = options.genreId.toString();
+      }
+
+      if (options.providerId) {
+        let providerString = options.providerId.toString();
+        if (options.providerId === 9 || options.providerId === 119) providerString = '119|9';
+        params.watch_region = 'FR';
+        params.with_watch_providers = providerString;
+        params.with_watch_monetization_types = 'flatrate|free|ads';
+      }
+
+      if (recentOnly) {
+        const eighteenMonthsAgo = new Date(Date.now() - 540 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+        const nextMonth = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+        if (type === 'movie') {
+          params['primary_release_date.gte'] = eighteenMonthsAgo;
+          params['primary_release_date.lte'] = nextMonth;
+        } else {
+          params['first_air_date.gte'] = eighteenMonthsAgo;
+          params['first_air_date.lte'] = nextMonth;
+        }
+      }
+
+      const data = await this.request<{ results: any[]; total_pages: number }>(endpoint, params);
+      return {
+        results: data.results.map((item) => this.normalizeMedia({ ...item, media_type: type })),
+        total_pages: data.total_pages,
+      };
+    }
+
+    // CAS 3: Tout (Films et Séries entrelacés)
+    if (!options.providerId && !options.genreId && !recentOnly && (!options.sortBy || options.sortBy === 'popularity.desc')) {
+      const trending = await this.getTrending('week', page);
+      return {
+        results: trending.results,
+        total_pages: trending.total_pages,
+      };
+    }
+
+    // Requête mixte Film + TV
+    const [moviesData, tvData] = await Promise.all([
+      this.discoverUnified({ ...options, type: 'movie' }).catch(() => ({ results: [], total_pages: 1 })),
+      this.discoverUnified({ ...options, type: 'tv' }).catch(() => ({ results: [], total_pages: 1 })),
+    ]);
+
+    const combined: TMDBMediaItem[] = [];
+    const maxLen = Math.max(moviesData.results.length, tvData.results.length);
+    for (let i = 0; i < maxLen; i++) {
+      if (moviesData.results[i]) combined.push(moviesData.results[i]);
+      if (tvData.results[i]) combined.push(tvData.results[i]);
+    }
+
+    return {
+      results: combined,
+      total_pages: Math.max(moviesData.total_pages, tvData.total_pages),
+    };
+  }
+
+  /**
    * Obtenir le détail des épisodes d'une saison de série TV
    */
   public static async getTvSeason(tvId: number, seasonNumber: number): Promise<any> {

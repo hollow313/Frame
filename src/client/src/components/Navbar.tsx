@@ -34,8 +34,6 @@ export const Navbar: React.FC<NavbarProps> = ({ currentTab, onSelectTab, onOpenS
     { id: 'dashboard', label: 'Accueil', icon: Sparkles },
     { id: 'discover', label: 'Découvrir', icon: Compass },
     { id: 'calendar', label: 'Calendrier', icon: CalendarIcon },
-    { id: 'movies', label: 'Films', icon: Film },
-    { id: 'tv', label: 'Séries', icon: Tv },
     { id: 'watched', label: 'Déjà Vu', icon: CheckCircle2 },
     { id: 'watchlist', label: 'À Voir', icon: Bookmark },
     { id: 'seer', label: 'Demandes', icon: CloudDownload },

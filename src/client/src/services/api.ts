@@ -93,6 +93,25 @@ export const api = {
     ),
   discoverAnime: (type: 'tv' | 'movie' | 'all' = 'tv', page: number = 1) =>
     request<{ results: MediaItem[]; total_pages: number }>(`/tmdb/anime?type=${type}&page=${page}`),
+  unifiedDiscover: (params: {
+    type?: 'all' | 'movie' | 'tv' | 'anime';
+    animeType?: 'tv' | 'movie';
+    providerId?: number;
+    genreId?: number;
+    recentOnly?: boolean;
+    sortBy?: 'popularity.desc' | 'release_date.desc' | 'vote_average.desc';
+    page?: number;
+  }) => {
+    const q = new URLSearchParams();
+    if (params.type) q.set('type', params.type);
+    if (params.animeType) q.set('animeType', params.animeType);
+    if (params.providerId) q.set('providerId', params.providerId.toString());
+    if (params.genreId) q.set('genreId', params.genreId.toString());
+    if (params.recentOnly !== undefined) q.set('recentOnly', params.recentOnly ? 'true' : 'false');
+    if (params.sortBy) q.set('sortBy', params.sortBy);
+    if (params.page) q.set('page', params.page.toString());
+    return request<{ results: MediaItem[]; total_pages: number }>(`/tmdb/unified-discover?${q.toString()}`);
+  },
 
   // ==================== WATCH TRACKING ====================
   markAsWatched: (payload: {
@@ -115,7 +134,7 @@ export const api = {
     request<{ success: boolean; message: string }>(`/media/watched/${mediaType}/${tmdbId}`, {
       method: 'DELETE',
     }),
-  getWatched: (type?: 'movie' | 'tv', sort?: string) =>
+  getWatched: (type?: 'movie' | 'tv' | 'anime', sort?: string) =>
     request<WatchedItem[]>(`/media/watched?${type ? `type=${type}&` : ''}${sort ? `sort=${sort}` : ''}`),
 
   // ==================== WATCHLIST ====================
@@ -171,7 +190,7 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(payload),
     }),
-  callbackSimklOAuth: (payload: { code: string; codeVerifier: string; redirectUri: string; clientId?: string; clientSecret?: string }) =>
+  callbackSimklOAuth: (payload: { code: string; codeVerifier?: string; redirectUri?: string; clientId?: string; clientSecret?: string }) =>
     request<{ success: boolean; message: string; user?: any }>('/simkl/oauth/callback', {
       method: 'POST',
       body: JSON.stringify(payload),

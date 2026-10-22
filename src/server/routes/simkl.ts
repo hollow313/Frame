@@ -34,12 +34,15 @@ router.post('/oauth/init', async (req: AuthenticatedRequest, res: Response): Pro
       redirectUri: effectiveRedirectUri,
     });
 
-    // Sauvegarder clientId & clientSecret
-    if (effectiveClientId || effectiveClientSecret) {
-      db.prepare(
-        'UPDATE users SET simkl_client_id = COALESCE(?, simkl_client_id), simkl_client_secret = COALESCE(?, simkl_client_secret) WHERE id = ?'
-      ).run(effectiveClientId || null, effectiveClientSecret || null, userId);
-    }
+    // Sauvegarder clientId, clientSecret, codeVerifier et redirectUri en base pour persistance robuste
+    db.prepare(`
+      UPDATE users 
+      SET simkl_client_id = COALESCE(?, simkl_client_id), 
+          simkl_client_secret = COALESCE(?, simkl_client_secret),
+          simkl_oauth_verifier = ?,
+          simkl_oauth_redirect_uri = ?
+      WHERE id = ?
+    `).run(effectiveClientId || null, effectiveClientSecret || null, oauthInit.codeVerifier, effectiveRedirectUri, userId);
 
     res.json({
       authUrl: oauthInit.authUrl,
@@ -57,23 +60,43 @@ router.post('/oauth/init', async (req: AuthenticatedRequest, res: Response): Pro
 router.post('/oauth/callback', async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   try {
     const userId = req.user!.id;
-    const { code, codeVerifier, redirectUri, clientId, clientSecret } = req.body;
+    let { code, codeVerifier, redirectUri, clientId, clientSecret } = req.body;
 
-    if (!code || !codeVerifier || !redirectUri) {
-      res.status(400).json({ error: 'Paramètres OAuth incomplets (code, codeVerifier et redirectUri requis).' });
+    if (!code) {
+      res.status(400).json({ error: 'Code d\'autorisation Simkl manquant.' });
       return;
     }
 
-    const userStmt = db.prepare('SELECT simkl_client_id, simkl_client_secret FROM users WHERE id = ?');
+    // Si l'utilisateur a copié-collé une URL complète (ex: https://simkl.com/?code=XYZ...)
+    let cleanCode = String(code).trim();
+    if (cleanCode.includes('code=')) {
+      try {
+        const match = cleanCode.match(/[?&#]code=([^&#]+)/);
+        if (match && match[1]) {
+          cleanCode = decodeURIComponent(match[1]);
+        }
+      } catch {
+        // En cas d'échec de parsing, conserver tel quel
+      }
+    }
+
+    const userStmt = db.prepare('SELECT simkl_client_id, simkl_client_secret, simkl_oauth_verifier, simkl_oauth_redirect_uri FROM users WHERE id = ?');
     const userRow = userStmt.get(userId) as any;
 
     const effectiveClientId = clientId?.trim() || userRow?.simkl_client_id || undefined;
     const effectiveClientSecret = clientSecret?.trim() || userRow?.simkl_client_secret || undefined;
+    const effectiveVerifier = (codeVerifier && String(codeVerifier).trim()) || userRow?.simkl_oauth_verifier || undefined;
+    const effectiveRedirectUri = (redirectUri && String(redirectUri).trim()) || userRow?.simkl_oauth_redirect_uri || 'https://simkl.com';
+
+    if (!effectiveVerifier) {
+      res.status(400).json({ error: 'Vérificateur PKCE introuvable. Veuillez relancer l\'étape 1 d\'autorisation.' });
+      return;
+    }
 
     const tokenData = await SimklService.exchangeOAuth2Code({
-      code: code.trim(),
-      codeVerifier: codeVerifier.trim(),
-      redirectUri: redirectUri.trim(),
+      code: cleanCode,
+      codeVerifier: effectiveVerifier,
+      redirectUri: effectiveRedirectUri,
       clientId: effectiveClientId,
       clientSecret: effectiveClientSecret,
     });

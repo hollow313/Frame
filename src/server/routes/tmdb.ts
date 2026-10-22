@@ -168,6 +168,34 @@ router.get('/providers/discover', async (req: AuthenticatedRequest, res: Respons
   }
 });
 
+// Découverte Unifiée (Films, Séries, Mangas avec Plateformes & Genres)
+router.get('/unified-discover', async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const type = (req.query.type as 'all' | 'movie' | 'tv' | 'anime') || 'all';
+    const animeType = (req.query.animeType as 'tv' | 'movie') || 'tv';
+    const providerId = req.query.providerId ? parseInt(req.query.providerId as string, 10) : undefined;
+    const genreId = req.query.genreId ? parseInt(req.query.genreId as string, 10) : undefined;
+    const recentOnly = req.query.recentOnly === 'true';
+    const sortBy = req.query.sortBy as 'popularity.desc' | 'release_date.desc' | 'vote_average.desc' | undefined;
+    const page = parseInt(req.query.page as string, 10) || 1;
+
+    const data = await TMDBService.discoverUnified({
+      type,
+      animeType,
+      providerId,
+      genreId,
+      recentOnly,
+      sortBy,
+      page,
+    });
+
+    data.results = annotateWithUserData(data.results, req.user?.id);
+    res.json(data);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Découvrir les Animés & Mangas (exclut les dessins animés pour enfants)
 router.get('/anime', async (req: AuthenticatedRequest, res: Response) => {
   try {

@@ -316,10 +316,12 @@ export class JellyfinService {
     let importedCount = 0;
     const insertStmt = db.prepare(`
       INSERT INTO watched_items (
-        user_id, tmdb_id, media_type, title, release_date, genres, overview, watched_at, synced_jellyfin
+        user_id, tmdb_id, media_type, title, poster_path, backdrop_path, release_date, genres, overview, watched_at, synced_jellyfin
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, 1)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, 1)
       ON CONFLICT(user_id, tmdb_id, media_type, season_number, episode_number) DO UPDATE SET
+        poster_path = COALESCE(watched_items.poster_path, excluded.poster_path),
+        backdrop_path = COALESCE(watched_items.backdrop_path, excluded.backdrop_path),
         synced_jellyfin = 1
     `);
 
@@ -328,11 +330,16 @@ export class JellyfinService {
       if (tmdbId) {
         try {
           const mediaType = it.Type === 'Movie' ? 'movie' : 'tv';
+          const posterUrl = it.ImageTags?.Primary ? `${url}/Items/${it.Id}/Images/Primary?fillWidth=500&quality=90` : null;
+          const backdropUrl = it.BackdropImageTags && it.BackdropImageTags.length > 0 ? `${url}/Items/${it.Id}/Images/Backdrop/0?fillWidth=1280&quality=85` : null;
+
           insertStmt.run(
             frameUserId,
             tmdbId,
             mediaType,
             it.Name || 'Sans titre',
+            posterUrl,
+            backdropUrl,
             it.PremiereDate ? it.PremiereDate.split('T')[0] : null,
             it.Genres ? JSON.stringify(it.Genres.map((name: string, i: number) => ({ id: i, name }))) : null,
             it.Overview || null

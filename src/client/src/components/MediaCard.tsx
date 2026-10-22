@@ -4,18 +4,39 @@ import { MediaItem } from '../types';
 
 interface MediaCardProps {
   item: MediaItem;
-  onSelect: (item: MediaItem) => void;
+  onSelect?: (item: MediaItem) => void;
+  onClick?: (item: MediaItem) => void;
   onToggleWatched?: (item: MediaItem) => void;
+  onOpenRating?: (item: MediaItem) => void;
   onToggleWatchlist?: (item: MediaItem) => void;
 }
 
 export const MediaCard: React.FC<MediaCardProps> = ({
   item,
   onSelect,
+  onClick,
   onToggleWatched,
+  onOpenRating,
   onToggleWatchlist,
 }) => {
+  const handleSelect = () => {
+    if (onSelect) onSelect(item);
+    else if (onClick) onClick(item);
+  };
+
+  const handleWatched = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (onToggleWatched) onToggleWatched(item);
+    else if (onOpenRating) onOpenRating(item);
+  };
+
+  const handleWatchlist = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (onToggleWatchlist) onToggleWatchlist(item);
+  };
+
   const year = item.release_date ? new Date(item.release_date).getFullYear() : null;
+  const isAnime = item.genre_ids?.includes(16) || item.genres?.some((g) => g.id === 16);
   const isMovie = item.media_type === 'movie';
 
   return (
@@ -23,7 +44,7 @@ export const MediaCard: React.FC<MediaCardProps> = ({
       {/* Poster Image Container */}
       <div 
         className="relative aspect-[2/3] w-full overflow-hidden bg-dark-850 cursor-pointer"
-        onClick={() => onSelect(item)}
+        onClick={handleSelect}
       >
         {item.poster_path ? (
           <img
@@ -45,8 +66,12 @@ export const MediaCard: React.FC<MediaCardProps> = ({
         {/* Top Badges */}
         <div className="absolute top-2 left-2 right-2 flex items-center justify-between pointer-events-none">
           {/* Media Type Badge */}
-          <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-dark-950/80 backdrop-blur-md text-slate-300 border border-white/10">
-            {isMovie ? 'Film' : 'Série'}
+          <span className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full backdrop-blur-md border ${
+            isAnime 
+              ? 'bg-amber-500/20 text-amber-300 border-amber-500/30' 
+              : 'bg-dark-950/80 text-slate-300 border-white/10'
+          }`}>
+            {isAnime ? 'Animé' : isMovie ? 'Film' : 'Série'}
           </span>
 
           {/* Rating */}
@@ -118,7 +143,7 @@ export const MediaCard: React.FC<MediaCardProps> = ({
             <button
               onClick={(e) => {
                 e.stopPropagation();
-                onSelect(item);
+                handleSelect();
               }}
               className="p-2 rounded-full bg-dark-800/90 hover:bg-white/20 text-slate-200 hover:text-white border border-white/10 backdrop-blur-md transition-transform hover:scale-110"
               title="Détails complets"
@@ -130,7 +155,7 @@ export const MediaCard: React.FC<MediaCardProps> = ({
       </div>
 
       {/* Info Section */}
-      <div className="p-3 flex flex-col flex-1 justify-between gap-1 cursor-pointer" onClick={() => onSelect(item)}>
+      <div className="p-3 flex flex-col flex-1 justify-between gap-1 cursor-pointer" onClick={handleSelect}>
         <h3 className="text-sm font-semibold text-slate-200 group-hover:text-primary-400 transition-colors line-clamp-1">
           {item.title}
         </h3>

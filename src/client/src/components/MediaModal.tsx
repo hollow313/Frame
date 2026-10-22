@@ -14,7 +14,9 @@ import {
   CheckCircle2,
   HardDrive,
   Layers,
-  ChevronDown
+  ChevronDown,
+  Share2,
+  Download
 } from 'lucide-react';
 import { MediaItem, TvEpisode } from '../types';
 import { api } from '../services/api';
@@ -49,6 +51,217 @@ export const MediaModal: React.FC<MediaModalProps> = ({
   const [selectedSeason, setSelectedSeason] = useState<number>(1);
   const [seasonEpisodes, setSeasonEpisodes] = useState<TvEpisode[]>([]);
   const [loadingSeason, setLoadingSeason] = useState<boolean>(false);
+  const [sharingMedia, setSharingMedia] = useState<boolean>(false);
+
+  const wrapText = (ctx: CanvasRenderingContext2D, text: string, maxWidth: number): string[] => {
+    const words = text.split(' ');
+    const lines: string[] = [];
+    let currentLine = words[0] || '';
+
+    for (let i = 1; i < words.length; i++) {
+      const word = words[i];
+      const width = ctx.measureText(currentLine + ' ' + word).width;
+      if (width < maxWidth) {
+        currentLine += ' ' + word;
+      } else {
+        lines.push(currentLine);
+        currentLine = word;
+      }
+    }
+    lines.push(currentLine);
+    return lines;
+  };
+
+  const drawPosterFallback = (ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, title: string) => {
+    ctx.fillStyle = '#1e293b';
+    ctx.beginPath();
+    ctx.roundRect(x, y, w, h, 16);
+    ctx.fill();
+    ctx.fillStyle = '#64748b';
+    ctx.font = 'bold 16px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(title.substring(0, 20), x + w / 2, y + h / 2);
+    ctx.textAlign = 'left';
+  };
+
+  const handleShareMedia = async () => {
+    if (!item) return;
+    setSharingMedia(true);
+    try {
+      const canvas = document.createElement('canvas');
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return;
+
+      const w = 1000;
+      const h = 560;
+      canvas.width = w;
+      canvas.height = h;
+
+      // Fond dégradé cinéma
+      const bgGrad = ctx.createLinearGradient(0, 0, w, h);
+      bgGrad.addColorStop(0, '#090d16');
+      bgGrad.addColorStop(0.6, '#0f172a');
+      bgGrad.addColorStop(1, '#1e1438');
+      ctx.fillStyle = bgGrad;
+      ctx.fillRect(0, 0, w, h);
+
+      // Halo
+      const halo = ctx.createRadialGradient(200, 200, 20, 200, 200, 450);
+      halo.addColorStop(0, 'rgba(99, 102, 241, 0.25)');
+      halo.addColorStop(1, 'rgba(99, 102, 241, 0)');
+      ctx.fillStyle = halo;
+      ctx.fillRect(0, 0, w, h);
+
+      // Bordure
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.1)';
+      ctx.lineWidth = 2;
+      ctx.strokeRect(15, 15, w - 30, h - 30);
+
+      // Header Brand
+      ctx.fillStyle = '#6366f1';
+      ctx.beginPath();
+      ctx.roundRect(50, 45, 36, 36, 10);
+      ctx.fill();
+
+      ctx.fillStyle = '#ffffff';
+      ctx.font = 'bold 22px sans-serif';
+      ctx.fillText('FRAME', 98, 71);
+
+      ctx.fillStyle = '#94a3b8';
+      ctx.font = '13px sans-serif';
+      ctx.fillText('MEDIA INTELLIGENCE & TRACKER', 190, 70);
+
+      // Poster loading
+      const posterX = 50;
+      const posterY = 110;
+      const posterW = 260;
+      const posterH = 390;
+
+      const drawRemainingDetails = () => {
+        const contentX = 350;
+        let curY = 145;
+
+        // Badge type
+        const isAnime = item.genres?.some((g: any) => g.id === 16);
+        ctx.fillStyle = isAnime ? '#f59e0b' : item.media_type === 'movie' ? '#6366f1' : '#8b5cf6';
+        ctx.beginPath();
+        ctx.roundRect(contentX, curY - 20, 80, 26, 8);
+        ctx.fill();
+
+        ctx.fillStyle = isAnime ? '#0f172a' : '#ffffff';
+        ctx.font = 'bold 12px sans-serif';
+        ctx.fillText(isAnime ? 'ANIMÉ' : item.media_type === 'movie' ? 'FILM' : 'SÉRIE', contentX + 16, curY - 3);
+
+        if (item.release_date) {
+          ctx.fillStyle = '#94a3b8';
+          ctx.font = '13px sans-serif';
+          ctx.fillText(`Sortie : ${new Date(item.release_date).getFullYear()}`, contentX + 100, curY - 3);
+        }
+
+        if (item.vote_average > 0) {
+          ctx.fillStyle = '#f59e0b';
+          ctx.font = 'bold 14px sans-serif';
+          ctx.fillText(`★ ${item.vote_average.toFixed(1)} / 10`, contentX + 220, curY - 3);
+        }
+
+        // Titre
+        curY += 45;
+        ctx.fillStyle = '#ffffff';
+        ctx.font = 'bold 28px sans-serif';
+        const titleText = item.title.length > 32 ? item.title.substring(0, 30) + '...' : item.title;
+        ctx.fillText(titleText, contentX, curY);
+
+        if (item.tagline) {
+          curY += 28;
+          ctx.fillStyle = '#a5b4fc';
+          ctx.font = 'italic 14px sans-serif';
+          const taglineText = item.tagline.length > 50 ? item.tagline.substring(0, 47) + '...' : item.tagline;
+          ctx.fillText(`« ${taglineText} »`, contentX, curY);
+        }
+
+        // Statut Vu
+        if (item.isWatched) {
+          curY += 35;
+          ctx.fillStyle = 'rgba(16, 185, 129, 0.15)';
+          ctx.beginPath();
+          ctx.roundRect(contentX, curY - 18, 300, 32, 10);
+          ctx.fill();
+          ctx.strokeStyle = 'rgba(16, 185, 129, 0.4)';
+          ctx.stroke();
+
+          ctx.fillStyle = '#34d399';
+          ctx.font = 'bold 13px sans-serif';
+          ctx.fillText(`✓ Visionné ${item.userRating ? `• Note attribuée : ${item.userRating}/10` : ''}`, contentX + 15, curY + 3);
+        }
+
+        // Synopsis court
+        if (item.overview) {
+          curY += 45;
+          ctx.fillStyle = '#cbd5e1';
+          ctx.font = '13px sans-serif';
+          const maxWords = 35;
+          const words = item.overview.split(' ').slice(0, maxWords).join(' ') + '...';
+          const lines = wrapText(ctx, words, 580);
+          lines.slice(0, 3).forEach((line: string, i: number) => {
+            ctx.fillText(line, contentX, curY + i * 20);
+          });
+          curY += lines.slice(0, 3).length * 20;
+        }
+
+        // Genres
+        curY += 35;
+        const genres = (item.genres || []).slice(0, 4);
+        let gx = contentX;
+        genres.forEach((g) => {
+          ctx.fillStyle = 'rgba(255, 255, 255, 0.08)';
+          ctx.beginPath();
+          ctx.roundRect(gx, curY - 14, g.name.length * 8 + 20, 26, 8);
+          ctx.fill();
+
+          ctx.fillStyle = '#cbd5e1';
+          ctx.font = '12px sans-serif';
+          ctx.fillText(g.name, gx + 10, curY + 3);
+          gx += g.name.length * 8 + 30;
+        });
+
+        // Télécharger
+        const link = document.createElement('a');
+        link.download = `frame-${item.title.toLowerCase().replace(/[^a-z0-9]+/g, '-')}.png`;
+        link.href = canvas.toDataURL('image/png');
+        link.click();
+      };
+
+      if (item.poster_path) {
+        const img = new Image();
+        img.crossOrigin = 'anonymous';
+        img.onload = () => {
+          ctx.save();
+          ctx.beginPath();
+          ctx.roundRect(posterX, posterY, posterW, posterH, 16);
+          ctx.clip();
+          ctx.drawImage(img, posterX, posterY, posterW, posterH);
+          ctx.restore();
+          ctx.strokeStyle = 'rgba(255, 255, 255, 0.15)';
+          ctx.lineWidth = 1;
+          ctx.strokeRect(posterX, posterY, posterW, posterH);
+          drawRemainingDetails();
+        };
+        img.onerror = () => {
+          drawPosterFallback(ctx, posterX, posterY, posterW, posterH, item.title);
+          drawRemainingDetails();
+        };
+        img.src = item.poster_path;
+      } else {
+        drawPosterFallback(ctx, posterX, posterY, posterW, posterH, item.title);
+        drawRemainingDetails();
+      }
+    } catch (e) {
+      console.error(e);
+      alert('Erreur lors du partage');
+    } finally {
+      setSharingMedia(false);
+    }
+  };
 
   useEffect(() => {
     if (isOpen && id) {
@@ -359,6 +572,16 @@ export const MediaModal: React.FC<MediaModalProps> = ({
                   >
                     <Bookmark className="w-4 h-4" />
                     <span>{item.inWatchlist ? 'Dans votre liste' : 'À regarder'}</span>
+                  </button>
+
+                  <button
+                    onClick={handleShareMedia}
+                    disabled={sharingMedia}
+                    className="flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-semibold bg-dark-750 hover:bg-dark-700 text-slate-300 hover:text-white border border-white/5 transition-all"
+                    title="Générer et télécharger une image récapitulative à partager"
+                  >
+                    <Share2 className="w-4 h-4 text-primary-400" />
+                    <span>{sharingMedia ? 'Génération...' : 'Partager'}</span>
                   </button>
                 </div>
 

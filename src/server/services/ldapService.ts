@@ -40,7 +40,7 @@ export class LDAPService {
       if (bindDn && bindPassword) {
         await client.bind(bindDn, bindPassword);
       } else {
-        await client.bind(); // Anonymous
+        await client.bind('', ''); // Anonymous
       }
       return { success: true, message: 'Connexion LDAP / LLDAP réussie !' };
     } catch (err: any) {
@@ -72,7 +72,7 @@ export class LDAPService {
       if (bindDn && bindPassword) {
         await client.bind(bindDn, bindPassword);
       } else {
-        await client.bind();
+        await client.bind('', '');
       }
 
       // 2. Recherche du compte utilisateur

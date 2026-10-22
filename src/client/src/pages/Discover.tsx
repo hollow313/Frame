@@ -9,13 +9,18 @@ import {
   Layers, 
   Flame, 
   Calendar,
-  Check
+  Filter,
+  Check,
+  Star,
+  SlidersHorizontal,
+  X
 } from 'lucide-react';
 import { MediaItem } from '../types';
 import { api } from '../services/api';
 import { MediaCard } from '../components/MediaCard';
 
 const PLATFORMS = [
+  { id: 0, name: 'Toutes les plateformes', color: 'from-slate-700 to-slate-900', border: 'border-white/10' },
   { id: 8, name: 'Netflix', color: 'from-red-600 to-rose-700', border: 'border-red-500/40' },
   { id: 119, name: 'Prime Video', color: 'from-sky-500 to-blue-600', border: 'border-blue-400/40' },
   { id: 337, name: 'Disney+', color: 'from-indigo-600 to-blue-800', border: 'border-indigo-400/40' },
@@ -25,11 +30,13 @@ const PLATFORMS = [
 ];
 
 const GENRES = [
+  { id: 0, name: 'Tous les genres' },
   { id: 28, name: 'Action' },
   { id: 12, name: 'Aventure' },
   { id: 16, name: 'Animation' },
   { id: 35, name: 'Comédie' },
   { id: 80, name: 'Crime' },
+  { id: 99, name: 'Documentaire' },
   { id: 18, name: 'Drame' },
   { id: 14, name: 'Fantastique' },
   { id: 27, name: 'Horreur' },
@@ -50,21 +57,22 @@ export const Discover: React.FC<DiscoverProps> = ({
   onOpenRating,
   onToggleWatchlist,
 }) => {
-  // Discovery Modes: 'trending' | 'platforms' | 'anime' | 'genres'
-  const [activeMode, setActiveMode] = useState<'trending' | 'platforms' | 'anime' | 'genres'>('trending');
-  const [mediaType, setMediaType] = useState<'all' | 'movie' | 'tv'>(initialType || 'all');
-  
-  // Platform state
-  const [selectedPlatform, setSelectedPlatform] = useState<number>(8);
-  const [recentOnly, setRecentOnly] = useState<boolean>(true); // Actif par défaut pour avoir les sorties du moment
+  // Main Category: 'all' | 'movie' | 'tv' | 'anime'
+  const [selectedCategory, setSelectedCategory] = useState<'all' | 'movie' | 'tv' | 'anime'>(
+    initialType || 'all'
+  );
 
-  // Anime sub-type
-  const [animeType, setAnimeType] = useState<'tv' | 'movie'>('tv');
+  // Filters
+  const [selectedPlatform, setSelectedPlatform] = useState<number>(0);
+  const [selectedGenre, setSelectedGenre] = useState<number>(0);
+  const [recentOnly, setRecentOnly] = useState<boolean>(true); // Actif par défaut pour privilégier les sorties du moment
+  const [sortBy, setSortBy] = useState<'popularity.desc' | 'release_date.desc' | 'vote_average.desc'>('popularity.desc');
+  const [animeSubtype, setAnimeSubtype] = useState<'tv' | 'movie'>('tv');
 
-  // Genre state
-  const [selectedGenre, setSelectedGenre] = useState<number>(28);
+  // UI state for filter drawer on mobile
+  const [showFilters, setShowFilters] = useState<boolean>(false);
 
-  // Pagination & Data
+  // Data & Pagination
   const [items, setItems] = useState<MediaItem[]>([]);
   const [page, setPage] = useState<number>(1);
   const [totalPages, setTotalPages] = useState<number>(1);
@@ -72,211 +80,150 @@ export const Discover: React.FC<DiscoverProps> = ({
 
   useEffect(() => {
     if (initialType) {
-      setMediaType(initialType);
+      setSelectedCategory(initialType);
     }
   }, [initialType]);
 
   useEffect(() => {
     loadMedia();
-  }, [activeMode, mediaType, selectedPlatform, recentOnly, animeType, selectedGenre, page]);
+  }, [selectedCategory, selectedPlatform, selectedGenre, recentOnly, sortBy, animeSubtype, page]);
 
   const loadMedia = async () => {
     setLoading(true);
     try {
-      if (activeMode === 'platforms') {
-        const typeToQuery = mediaType === 'tv' ? 'tv' : 'movie';
-        const res = await api.discoverByProvider(
-          typeToQuery,
-          selectedPlatform,
-          undefined,
-          page,
-          recentOnly
-        );
-        setItems(res.results);
-        setTotalPages(Math.min(res.total_pages, 50));
-      } else if (activeMode === 'anime') {
-        const res = await api.discoverAnime(animeType, page);
-        setItems(res.results);
-        setTotalPages(Math.min(res.total_pages, 50));
-      } else if (activeMode === 'genres') {
-        const typeToQuery = mediaType === 'tv' ? 'tv' : 'movie';
-        const res = await api.discoverByGenre(typeToQuery, selectedGenre, page);
-        setItems(res.results);
-        setTotalPages(Math.min(res.total_pages, 50));
-      } else {
-        // Trending
-        if (mediaType === 'movie') {
-          const res = await api.getPopularMovies(page);
-          setItems(res.results);
-          setTotalPages(Math.min(res.total_pages, 50));
-        } else if (mediaType === 'tv') {
-          const res = await api.getPopularTV(page);
-          setItems(res.results);
-          setTotalPages(Math.min(res.total_pages, 50));
-        } else {
-          const res = await api.getTrending('week', page);
-          setItems(res.results);
-          setTotalPages(Math.min(res.total_pages, 50));
-        }
-      }
+      const res = await api.unifiedDiscover({
+        type: selectedCategory,
+        animeType: animeSubtype,
+        providerId: selectedPlatform > 0 ? selectedPlatform : undefined,
+        genreId: selectedGenre > 0 ? selectedGenre : undefined,
+        recentOnly,
+        sortBy,
+        page,
+      });
+
+      setItems(res.results);
+      setTotalPages(Math.min(res.total_pages, 50));
     } catch (err) {
-      console.error('Erreur chargement explorer', err);
+      console.error('Erreur chargement découverte unifiée', err);
     } finally {
       setLoading(false);
     }
   };
 
+  const handleResetFilters = () => {
+    setSelectedPlatform(0);
+    setSelectedGenre(0);
+    setRecentOnly(false);
+    setSortBy('popularity.desc');
+    setPage(1);
+  };
+
+  const hasActiveFilters = selectedPlatform > 0 || selectedGenre > 0 || recentOnly || sortBy !== 'popularity.desc';
+
   return (
-    <div className="space-y-6 pb-16">
+    <div className="space-y-6 pb-20">
       {/* Top Header */}
-      <div>
-        <h1 className="text-2xl sm:text-3xl font-extrabold text-white tracking-tight flex items-center gap-2.5">
-          <Compass className="w-7 h-7 text-primary-400" />
-          <span>Explorer & Découvrir</span>
-        </h1>
-        <p className="text-sm text-slate-400 mt-1">
-          Explorez les tendances, les catalogues par plateforme, les mangas et les genres cinématographiques.
-        </p>
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div>
+          <h1 className="text-2xl sm:text-3xl font-extrabold text-white tracking-tight flex items-center gap-2.5">
+            <Compass className="w-7 h-7 text-primary-400" />
+            <span>Découvrir</span>
+          </h1>
+          <p className="text-sm text-slate-400 mt-1">
+            Explorez les nouveautés films, séries et mangas, filtrez par plateforme de streaming et trouvez votre prochain coup de cœur.
+          </p>
+        </div>
+
+        <button
+          onClick={() => setShowFilters(!showFilters)}
+          className="sm:hidden flex items-center gap-2 px-3.5 py-2 rounded-xl bg-dark-900 border border-white/10 text-xs font-semibold text-slate-200"
+        >
+          <SlidersHorizontal className="w-4 h-4 text-primary-400" />
+          <span>Filtres {hasActiveFilters ? '(Actifs)' : ''}</span>
+        </button>
       </div>
 
-      {/* Main Mode Pills (Trending, Platforms, Anime, Genres) */}
+      {/* Main Categories Selector (Tout, Films, Séries, Mangas & Animés) */}
       <div className="flex flex-wrap items-center gap-2 p-1.5 bg-dark-900 border border-white/5 rounded-2xl">
         <button
-          onClick={() => { setActiveMode('trending'); setPage(1); }}
+          onClick={() => { setSelectedCategory('all'); setPage(1); }}
           className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all ${
-            activeMode === 'trending'
+            selectedCategory === 'all'
               ? 'bg-primary-600 text-white shadow-glow scale-102'
               : 'text-slate-400 hover:text-white hover:bg-dark-850'
           }`}
         >
           <Flame className="w-4 h-4" />
-          <span>Tendances & Populaires</span>
+          <span>Tout voir</span>
         </button>
 
         <button
-          onClick={() => { setActiveMode('platforms'); setPage(1); }}
+          onClick={() => { setSelectedCategory('movie'); setPage(1); }}
           className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all ${
-            activeMode === 'platforms'
+            selectedCategory === 'movie'
               ? 'bg-primary-600 text-white shadow-glow scale-102'
               : 'text-slate-400 hover:text-white hover:bg-dark-850'
           }`}
         >
-          <Layers className="w-4 h-4" />
-          <span>Par Plateforme (SVOD)</span>
+          <Film className="w-4 h-4" />
+          <span>Films</span>
         </button>
 
         <button
-          onClick={() => { setActiveMode('anime'); setPage(1); }}
+          onClick={() => { setSelectedCategory('tv'); setPage(1); }}
           className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all ${
-            activeMode === 'anime'
+            selectedCategory === 'tv'
               ? 'bg-primary-600 text-white shadow-glow scale-102'
+              : 'text-slate-400 hover:text-white hover:bg-dark-850'
+          }`}
+        >
+          <Tv className="w-4 h-4" />
+          <span>Séries</span>
+        </button>
+
+        <button
+          onClick={() => { setSelectedCategory('anime'); setPage(1); }}
+          className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all ${
+            selectedCategory === 'anime'
+              ? 'bg-amber-500 text-dark-950 shadow-glow font-black scale-102'
               : 'text-slate-400 hover:text-white hover:bg-dark-850'
           }`}
         >
           <Sparkles className="w-4 h-4" />
           <span>Mangas & Animés</span>
         </button>
-
-        <button
-          onClick={() => { setActiveMode('genres'); setPage(1); }}
-          className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all ${
-            activeMode === 'genres'
-              ? 'bg-primary-600 text-white shadow-glow scale-102'
-              : 'text-slate-400 hover:text-white hover:bg-dark-850'
-          }`}
-        >
-          <Compass className="w-4 h-4" />
-          <span>Par Genre</span>
-        </button>
       </div>
 
-      {/* Sub-Filters: Mode Specific Controls */}
-      {activeMode === 'platforms' && (
-        <div className="p-4 rounded-2xl bg-dark-900 border border-white/5 space-y-4">
-          {/* Platforms Grid */}
-          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-2.5">
-            {PLATFORMS.map((p) => {
-              const active = p.id === selectedPlatform;
-              return (
-                <button
-                  key={p.id}
-                  onClick={() => { setSelectedPlatform(p.id); setPage(1); }}
-                  className={`p-3 rounded-2xl font-bold text-xs transition-all flex flex-col items-center justify-center gap-1 border ${
-                    active
-                      ? `bg-gradient-to-tr ${p.color} text-white ${p.border} shadow-lg scale-105`
-                      : 'bg-dark-850 text-slate-400 hover:text-white border-white/5 hover:bg-dark-800'
-                  }`}
-                >
-                  <span className="text-sm">{p.name}</span>
-                </button>
-              );
-            })}
-          </div>
-
-          {/* Platform Settings: Media Type and Recent Releases Toggle */}
-          <div className="flex flex-wrap items-center justify-between gap-3 pt-2 border-t border-white/5">
-            <div className="flex items-center gap-2">
-              <span className="text-xs font-medium text-slate-400">Type :</span>
-              <button
-                onClick={() => { setMediaType('movie'); setPage(1); }}
-                className={`px-3 py-1 rounded-lg text-xs font-bold transition-colors ${
-                  mediaType !== 'tv' ? 'bg-primary-600 text-white' : 'bg-dark-850 text-slate-400 hover:text-white'
-                }`}
-              >
-                Films
-              </button>
-              <button
-                onClick={() => { setMediaType('tv'); setPage(1); }}
-                className={`px-3 py-1 rounded-lg text-xs font-bold transition-colors ${
-                  mediaType === 'tv' ? 'bg-primary-600 text-white' : 'bg-dark-850 text-slate-400 hover:text-white'
-                }`}
-              >
-                Séries
-              </button>
+      {/* Manga Specific Sub-bar */}
+      {selectedCategory === 'anime' && (
+        <div className="p-3.5 rounded-2xl bg-gradient-to-r from-amber-500/10 via-dark-900 to-dark-900 border border-amber-500/20 flex flex-wrap items-center justify-between gap-3 animate-in fade-in duration-200">
+          <div className="flex items-center gap-2.5">
+            <Sparkles className="w-5 h-5 text-amber-400 shrink-0" />
+            <div>
+              <p className="text-xs font-bold text-white">Animation Japonaise (Mangas & Animés)</p>
+              <p className="text-[11px] text-slate-400">
+                Œuvres sélectionnées pour ados et adultes (dessins animés pour jeunes enfants strictement exclus).
+              </p>
             </div>
-
-            {/* Recent Releases Toggle */}
-            <label className="flex items-center gap-2.5 cursor-pointer bg-dark-850 hover:bg-dark-800 px-3 py-1.5 rounded-xl border border-white/5 transition-colors">
-              <input
-                type="checkbox"
-                checked={recentOnly}
-                onChange={(e) => { setRecentOnly(e.target.checked); setPage(1); }}
-                className="w-4 h-4 rounded border-slate-700 bg-dark-900 text-primary-600 focus:ring-0"
-              />
-              <span className="text-xs font-semibold text-slate-200 flex items-center gap-1.5">
-                <Calendar className="w-3.5 h-3.5 text-primary-400" />
-                <span>Sorties récentes du moment (2025 - 2026)</span>
-              </span>
-            </label>
-          </div>
-        </div>
-      )}
-
-      {activeMode === 'anime' && (
-        <div className="p-4 rounded-2xl bg-dark-900 border border-white/5 flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <h3 className="text-sm font-bold text-white flex items-center gap-2">
-              <Sparkles className="w-4 h-4 text-amber-400" />
-              <span>Animation Japonaise (Mangas & Animés)</span>
-            </h3>
-            <p className="text-xs text-slate-400 mt-0.5">
-              Sélection d'œuvres pour ados et adultes (dessins animés pour jeunes enfants strictement exclus).
-            </p>
           </div>
 
           <div className="flex items-center gap-2">
             <button
-              onClick={() => { setAnimeType('tv'); setPage(1); }}
-              className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-colors ${
-                animeType === 'tv' ? 'bg-amber-500 text-dark-950 font-black shadow' : 'bg-dark-850 text-slate-400 hover:text-white'
+              onClick={() => { setAnimeSubtype('tv'); setPage(1); }}
+              className={`px-3 py-1 rounded-xl text-xs font-bold transition-all ${
+                animeSubtype === 'tv'
+                  ? 'bg-amber-500 text-dark-950 font-black shadow'
+                  : 'bg-dark-850 text-slate-400 hover:text-white'
               }`}
             >
               Séries Animées
             </button>
             <button
-              onClick={() => { setAnimeType('movie'); setPage(1); }}
-              className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-colors ${
-                animeType === 'movie' ? 'bg-amber-500 text-dark-950 font-black shadow' : 'bg-dark-850 text-slate-400 hover:text-white'
+              onClick={() => { setAnimeSubtype('movie'); setPage(1); }}
+              className={`px-3 py-1 rounded-xl text-xs font-bold transition-all ${
+                animeSubtype === 'movie'
+                  ? 'bg-amber-500 text-dark-950 font-black shadow'
+                  : 'bg-dark-850 text-slate-400 hover:text-white'
               }`}
             >
               Films d'Animation
@@ -285,38 +232,75 @@ export const Discover: React.FC<DiscoverProps> = ({
         </div>
       )}
 
-      {activeMode === 'genres' && (
-        <div className="p-4 rounded-2xl bg-dark-900 border border-white/5 space-y-3">
-          <div className="flex items-center gap-2 mb-2">
-            <span className="text-xs font-medium text-slate-400">Type d'œuvre :</span>
-            <button
-              onClick={() => { setMediaType('movie'); setPage(1); }}
-              className={`px-3 py-1 rounded-lg text-xs font-bold ${
-                mediaType !== 'tv' ? 'bg-primary-600 text-white' : 'bg-dark-850 text-slate-400 hover:text-white'
-              }`}
-            >
-              Films
-            </button>
-            <button
-              onClick={() => { setMediaType('tv'); setPage(1); }}
-              className={`px-3 py-1 rounded-lg text-xs font-bold ${
-                mediaType === 'tv' ? 'bg-primary-600 text-white' : 'bg-dark-850 text-slate-400 hover:text-white'
-              }`}
-            >
-              Séries
-            </button>
+      {/* Unified Filter Controls Panel */}
+      <div className={`p-4 sm:p-5 rounded-2xl bg-dark-900 border border-white/5 space-y-4 ${showFilters ? 'block' : 'hidden sm:block'}`}>
+        {/* Row 1: Platform SVOD Pills */}
+        <div>
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-xs font-bold text-slate-300 flex items-center gap-1.5 uppercase tracking-wider">
+              <Layers className="w-3.5 h-3.5 text-primary-400" />
+              <span>Plateforme de streaming (France)</span>
+            </span>
+            {selectedPlatform > 0 && (
+              <button
+                onClick={() => { setSelectedPlatform(0); setPage(1); }}
+                className="text-[11px] text-primary-400 hover:underline flex items-center gap-1"
+              >
+                <X className="w-3 h-3" />
+                <span>Réinitialiser plateforme</span>
+              </button>
+            )}
           </div>
 
           <div className="flex flex-wrap gap-2">
+            {PLATFORMS.map((p) => {
+              const active = p.id === selectedPlatform;
+              return (
+                <button
+                  key={p.id}
+                  onClick={() => { setSelectedPlatform(p.id); setPage(1); }}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 border ${
+                    active
+                      ? `bg-gradient-to-r ${p.color} text-white ${p.border} shadow-md scale-102`
+                      : 'bg-dark-850 text-slate-400 hover:text-white border-white/5 hover:bg-dark-800'
+                  }`}
+                >
+                  {active && <Check className="w-3 h-3 stroke-[3]" />}
+                  <span>{p.name}</span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Row 2: Genre Pills */}
+        <div>
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-xs font-bold text-slate-300 flex items-center gap-1.5 uppercase tracking-wider">
+              <Filter className="w-3.5 h-3.5 text-primary-400" />
+              <span>Genre</span>
+            </span>
+            {selectedGenre > 0 && (
+              <button
+                onClick={() => { setSelectedGenre(0); setPage(1); }}
+                className="text-[11px] text-primary-400 hover:underline flex items-center gap-1"
+              >
+                <X className="w-3 h-3" />
+                <span>Tous genres</span>
+              </button>
+            )}
+          </div>
+
+          <div className="flex flex-wrap gap-1.5">
             {GENRES.map((g) => {
               const active = g.id === selectedGenre;
               return (
                 <button
                   key={g.id}
                   onClick={() => { setSelectedGenre(g.id); setPage(1); }}
-                  className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition-all ${
+                  className={`px-2.5 py-1 rounded-lg text-xs font-medium transition-all ${
                     active
-                      ? 'bg-primary-600 text-white shadow'
+                      ? 'bg-primary-600 text-white shadow font-semibold'
                       : 'bg-dark-850 text-slate-400 hover:text-white border border-white/5 hover:bg-dark-800'
                   }`}
                 >
@@ -326,38 +310,50 @@ export const Discover: React.FC<DiscoverProps> = ({
             })}
           </div>
         </div>
-      )}
 
-      {activeMode === 'trending' && (
-        <div className="flex items-center gap-1.5 p-1 bg-dark-900 border border-white/5 rounded-xl w-fit">
-          <button
-            onClick={() => { setMediaType('all'); setPage(1); }}
-            className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
-              mediaType === 'all' ? 'bg-primary-600 text-white shadow' : 'text-slate-400 hover:text-white'
-            }`}
-          >
-            Tout
-          </button>
-          <button
-            onClick={() => { setMediaType('movie'); setPage(1); }}
-            className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
-              mediaType === 'movie' ? 'bg-primary-600 text-white shadow' : 'text-slate-400 hover:text-white'
-            }`}
-          >
-            Films
-          </button>
-          <button
-            onClick={() => { setMediaType('tv'); setPage(1); }}
-            className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
-              mediaType === 'tv' ? 'bg-primary-600 text-white shadow' : 'text-slate-400 hover:text-white'
-            }`}
-          >
-            Séries
-          </button>
+        {/* Row 3: Sort Options & Recent Releases Toggle */}
+        <div className="flex flex-wrap items-center justify-between gap-3 pt-3 border-t border-white/5 text-xs">
+          {/* Left: Recent Releases Toggle */}
+          <label className="flex items-center gap-2.5 cursor-pointer bg-dark-850 hover:bg-dark-800 px-3 py-1.5 rounded-xl border border-white/5 transition-colors">
+            <input
+              type="checkbox"
+              checked={recentOnly}
+              onChange={(e) => { setRecentOnly(e.target.checked); setPage(1); }}
+              className="w-4 h-4 rounded border-slate-700 bg-dark-900 text-primary-600 focus:ring-0"
+            />
+            <span className="font-semibold text-slate-200 flex items-center gap-1.5">
+              <Calendar className="w-3.5 h-3.5 text-primary-400" />
+              <span>Sorties récentes du moment (2025 - 2026)</span>
+            </span>
+          </label>
+
+          {/* Right: Tri & Reset */}
+          <div className="flex items-center gap-2">
+            <span className="text-slate-400 font-medium">Trier par :</span>
+            <select
+              value={sortBy}
+              onChange={(e) => { setSortBy(e.target.value as any); setPage(1); }}
+              className="bg-dark-850 border border-white/10 text-slate-200 text-xs rounded-xl px-3 py-1.5 focus:outline-none focus:border-primary-500"
+            >
+              <option value="popularity.desc">Plus populaires</option>
+              <option value="release_date.desc">Sortie la plus récente</option>
+              <option value="vote_average.desc">Mieux notés</option>
+            </select>
+
+            {hasActiveFilters && (
+              <button
+                onClick={handleResetFilters}
+                className="px-2.5 py-1.5 rounded-xl bg-dark-800 hover:bg-rose-500/20 text-slate-400 hover:text-rose-300 border border-white/5 transition-colors ml-2"
+                title="Réinitialiser tous les filtres"
+              >
+                Effacer filtres
+              </button>
+            )}
+          </div>
         </div>
-      )}
+      </div>
 
-      {/* Media Grid */}
+      {/* Media Items Grid */}
       {loading ? (
         <div className="h-96 flex items-center justify-center">
           <div className="w-10 h-10 border-2 border-primary-500 border-t-transparent rounded-full animate-spin" />
@@ -368,9 +364,10 @@ export const Discover: React.FC<DiscoverProps> = ({
             <MediaCard
               key={`${item.media_type}-${item.id}`}
               item={item}
-              onClick={() => onSelectMedia(item)}
-              onOpenRating={() => onOpenRating(item)}
-              onToggleWatchlist={() => onToggleWatchlist(item)}
+              onSelect={onSelectMedia}
+              onClick={onSelectMedia}
+              onOpenRating={onOpenRating}
+              onToggleWatchlist={onToggleWatchlist}
             />
           ))}
         </div>
@@ -378,6 +375,12 @@ export const Discover: React.FC<DiscoverProps> = ({
         <div className="py-24 text-center space-y-3 bg-dark-900/30 rounded-3xl border border-white/5">
           <Compass className="w-12 h-12 text-slate-600 mx-auto" />
           <p className="text-base font-semibold text-slate-300">Aucun résultat trouvé pour ces critères.</p>
+          <button
+            onClick={handleResetFilters}
+            className="px-4 py-2 rounded-xl bg-primary-600 hover:bg-primary-500 text-white text-xs font-semibold shadow-glow transition-all"
+          >
+            Réinitialiser les filtres
+          </button>
         </div>
       )}
 
@@ -385,7 +388,7 @@ export const Discover: React.FC<DiscoverProps> = ({
       {!loading && totalPages > 1 && (
         <div className="flex items-center justify-center gap-3 pt-6">
           <button
-            onClick={() => setPage((p) => Math.max(p - 1, 1))}
+            onClick={() => { setPage((p) => Math.max(p - 1, 1)); window.scrollTo({ top: 0, behavior: 'smooth' }); }}
             disabled={page === 1}
             className="flex items-center gap-1 px-4 py-2 rounded-xl bg-dark-900 border border-white/5 text-xs font-semibold text-slate-300 hover:text-white disabled:opacity-40 transition-colors"
           >
@@ -398,7 +401,7 @@ export const Discover: React.FC<DiscoverProps> = ({
           </span>
 
           <button
-            onClick={() => setPage((p) => Math.min(p + 1, totalPages))}
+            onClick={() => { setPage((p) => Math.min(p + 1, totalPages)); window.scrollTo({ top: 0, behavior: 'smooth' }); }}
             disabled={page === totalPages}
             className="flex items-center gap-1 px-4 py-2 rounded-xl bg-dark-900 border border-white/5 text-xs font-semibold text-slate-300 hover:text-white disabled:opacity-40 transition-colors"
           >
