@@ -102,6 +102,6 @@ export function generateToken(user: AuthUser): string {
       displayName: user.displayName,
     },
     secret,
-    { expiresIn: '7d' }
+    { expiresIn: '365d' }
   );
 }

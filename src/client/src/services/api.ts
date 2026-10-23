@@ -29,9 +29,12 @@ export function setToken(token: string | null) {
 async function request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
   const token = getToken();
   const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
     ...((options.headers as Record<string, string>) || {}),
   };
+
+  if (options.body !== undefined && !headers['Content-Type']) {
+    headers['Content-Type'] = 'application/json';
+  }
 
   if (token) {
     headers['Authorization'] = `Bearer ${token}`;
@@ -39,12 +42,15 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
 
   const res = await fetch(`${API_BASE}${endpoint}`, {
     ...options,
+    credentials: 'same-origin',
     headers,
   });
 
-  const data = await res.json();
+  const data = await res.json().catch(() => ({}));
   if (!res.ok) {
-    throw new Error(data.error || `Erreur serveur (${res.status})`);
+    const err: any = new Error(data.error || `Erreur serveur (${res.status})`);
+    err.status = res.status;
+    throw err;
   }
 
   return data as T;

@@ -38,7 +38,7 @@ export class SimklService {
     state: string;
     codeChallenge: string;
   }): string {
-    const url = new URL('https://simkl.com/oauth/authorize');
+    const url = new URL('https://simkl.com/oauth2/authorize');
     url.searchParams.set('response_type', 'code');
     url.searchParams.set('client_id', params.clientId.trim());
     url.searchParams.set('redirect_uri', params.redirectUri.trim());
@@ -49,7 +49,7 @@ export class SimklService {
   }
 
   /**
-   * Échanger le code d'autorisation OAuth contre un access_token (supporte V2 PKCE + Client Secret)
+   * Échanger le code d'autorisation OAuth contre un access_token (supporte V2 /oauth2/token avec PKCE + Client Secret, et fallback V1 /oauth/token)
    */
   public static async exchangeCodeForToken(params: {
     code: string;
@@ -75,23 +75,46 @@ export class SimklService {
       bodyPayload.code_verifier = params.codeVerifier.trim();
     }
 
-    const res = await fetch(`${SIMKL_API_BASE}/oauth/token`, {
+    const requestHeaders = {
+      'Content-Type': 'application/json',
+      Accept: 'application/json',
+      'simkl-api-key': cleanClientId,
+    };
+
+    // 1. Endpoint OAuth 2.0 V2 (/oauth2/token)
+    let res = await fetch(`${SIMKL_API_BASE}/oauth2/token`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Accept': 'application/json',
-        'simkl-api-key': cleanClientId,
-      },
+      headers: requestHeaders,
       body: JSON.stringify(bodyPayload),
       signal: AbortSignal.timeout(10000),
     });
 
-    const data = await res.json().catch(() => ({}));
+    let data = await res.json().catch(() => ({}));
+
+    // 2. Fallback sur l'ancien endpoint (/oauth/token) si l'application Simkl est en V1
+    if (!res.ok || !data.access_token) {
+      const v1Res = await fetch(`${SIMKL_API_BASE}/oauth/token`, {
+        method: 'POST',
+        headers: requestHeaders,
+        body: JSON.stringify(bodyPayload),
+        signal: AbortSignal.timeout(10000),
+      }).catch(() => null);
+
+      if (v1Res) {
+        const v1Data = await v1Res.json().catch(() => ({}));
+        if (v1Res.ok && v1Data.access_token) {
+          res = v1Res;
+          data = v1Data;
+        }
+      }
+    }
+
     if (!res.ok || !data.access_token) {
       throw new Error(
         data.error_description ||
+          data.message ||
           data.error ||
-          `Échec de l'échange OAuth Simkl (${res.status}). Vérifiez que le Redirect URI correspond exactement à celui configuré dans votre application Simkl.`
+          `Échec de l'échange OAuth Simkl (${res.status}). Vérifiez que le Client Secret et le Redirect URI correspondent à ceux configurés dans votre application Simkl.`
       );
     }
 
@@ -128,18 +151,37 @@ export class SimklService {
         payload.client_secret = clientSecret;
       }
 
-      const res = await fetch(`${SIMKL_API_BASE}/oauth/token`, {
+      const headers = {
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+        'simkl-api-key': clientId,
+      };
+
+      let res = await fetch(`${SIMKL_API_BASE}/oauth2/token`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Accept: 'application/json',
-          'simkl-api-key': clientId,
-        },
+        headers,
         body: JSON.stringify(payload),
         signal: AbortSignal.timeout(10000),
       });
 
-      const data = await res.json().catch(() => ({}));
+      let data = await res.json().catch(() => ({}));
+
+      if (!res.ok || !data.access_token) {
+        const v1Res = await fetch(`${SIMKL_API_BASE}/oauth/token`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify(payload),
+          signal: AbortSignal.timeout(10000),
+        }).catch(() => null);
+        if (v1Res) {
+          const v1Data = await v1Res.json().catch(() => ({}));
+          if (v1Res.ok && v1Data.access_token) {
+            res = v1Res;
+            data = v1Data;
+          }
+        }
+      }
+
       if (!res.ok || !data.access_token) {
         logger.warn('Simkl', 'Échec du rafraîchissement du token OAuth Simkl', {
           userId,
@@ -161,7 +203,7 @@ export class SimklService {
   }
 
   /**
-   * Démarrer un flux d'authentification par code PIN / Device Code Simkl (compatible V1 et V2)
+   * Démarrer un flux d'authentification par code PIN / Device Code Simkl (compatible OAuth 2.0 /oauth2/device et V1 /oauth/pin)
    */
   public static async getDevicePin(customClientId?: string, customClientSecret?: string): Promise<{
     user_code: string;
@@ -186,12 +228,13 @@ export class SimklService {
       setSetting('SIMKL_CLIENT_SECRET', clientSecret);
     }
 
+    // 1. Essayer l'endpoint OAuth 2.0 Device Flow officiel (/oauth2/device)
     try {
-      const v2Res = await fetch(`${SIMKL_API_BASE}/oauth/device`, {
+      const v2Res = await fetch(`${SIMKL_API_BASE}/oauth2/device`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Accept': 'application/json',
+          Accept: 'application/json',
           'simkl-api-key': clientId,
         },
         body: JSON.stringify({ client_id: clientId }),
@@ -216,6 +259,7 @@ export class SimklService {
       // Fallback sur l'endpoint V1
     }
 
+    // 2. Fallback V1 (/oauth/pin)
     const res = await fetch(`${SIMKL_API_BASE}/oauth/pin?client_id=${encodeURIComponent(clientId)}`, {
       headers: {
         'Content-Type': 'application/json',
@@ -242,7 +286,7 @@ export class SimklService {
   }
 
   /**
-   * Vérifier si l'utilisateur a validé le code PIN sur Simkl (supporte V1 et V2)
+   * Vérifier si l'utilisateur a validé le code PIN sur Simkl (supporte OAuth 2.0 /oauth2/token et V1 /oauth/pin)
    */
   public static async checkDevicePin(
     userCode: string,
@@ -267,11 +311,11 @@ export class SimklService {
           payload.client_secret = clientSecret;
         }
 
-        const v2Res = await fetch(`${SIMKL_API_BASE}/oauth/token`, {
+        const v2Res = await fetch(`${SIMKL_API_BASE}/oauth2/token`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            'Accept': 'application/json',
+            Accept: 'application/json',
             'simkl-api-key': clientId,
           },
           body: JSON.stringify(payload),
@@ -284,6 +328,13 @@ export class SimklService {
             result: 'OK',
             access_token: v2Data.access_token,
             refresh_token: v2Data.refresh_token,
+          };
+        }
+
+        if (v2Data.error === 'authorization_pending' || v2Data.error === 'slow_down') {
+          return {
+            result: 'KO',
+            message: 'En attente de validation du code sur https://simkl.com/pin (cliquez sur « Valider sur Simkl » puis approuvez Frame).',
           };
         }
       } catch {

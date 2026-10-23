@@ -26,43 +26,47 @@ const AppContent: React.FC = () => {
   const [searchOpen, setSearchOpen] = useState<boolean>(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
+  const oauthHandledRef = React.useRef<boolean>(false);
+
   const showToast = (msg: string) => {
     setToastMessage(msg);
-    setTimeout(() => setToastMessage(null), 3000);
+    setTimeout(() => setToastMessage(null), 4000);
   };
 
   useEffect(() => {
     const urlParams = new URLSearchParams(window.location.search);
     const code = urlParams.get('code');
-    if (code) {
-      const verifier = localStorage.getItem('simkl_oauth_verifier');
+    if (code && !oauthHandledRef.current) {
+      oauthHandledRef.current = true;
+      const verifier = localStorage.getItem('simkl_oauth_verifier') || undefined;
       const redirectUri = localStorage.getItem('simkl_oauth_redirect_uri') || `${window.location.origin}/settings`;
       const savedClientId = localStorage.getItem('simkl_oauth_client_id') || undefined;
       const savedClientSecret = localStorage.getItem('simkl_oauth_client_secret') || undefined;
 
-      if (verifier) {
-        api.callbackSimklOAuth({
-          code,
-          codeVerifier: verifier,
-          redirectUri,
-          clientId: savedClientId,
-          clientSecret: savedClientSecret,
+      // Nettoyer l'URL immédiatement pour éviter toute double exécution
+      window.history.replaceState({}, document.title, window.location.pathname);
+
+      api.callbackSimklOAuth({
+        code,
+        codeVerifier: verifier,
+        redirectUri,
+        clientId: savedClientId,
+        clientSecret: savedClientSecret,
+      })
+        .then((res) => {
+          showToast(res.message || 'Compte Simkl lié avec succès !');
+          localStorage.removeItem('simkl_oauth_verifier');
+          localStorage.removeItem('simkl_oauth_state');
+          localStorage.removeItem('simkl_oauth_redirect_uri');
+          localStorage.removeItem('simkl_oauth_client_id');
+          localStorage.removeItem('simkl_oauth_client_secret');
+          refreshUser();
+          setCurrentTab('settings');
         })
-          .then((res) => {
-            showToast(res.message || 'Compte Simkl lié avec succès !');
-            localStorage.removeItem('simkl_oauth_verifier');
-            localStorage.removeItem('simkl_oauth_state');
-            localStorage.removeItem('simkl_oauth_redirect_uri');
-            localStorage.removeItem('simkl_oauth_client_id');
-            localStorage.removeItem('simkl_oauth_client_secret');
-            window.history.replaceState({}, document.title, window.location.pathname);
-            refreshUser();
-            setCurrentTab('settings');
-          })
-          .catch((err) => {
-            showToast('Erreur Simkl: ' + (err.message || 'Échec'));
-          });
-      }
+        .catch((err) => {
+          showToast('Erreur Simkl: ' + (err.message || 'Échec'));
+          setCurrentTab('settings');
+        });
     }
   }, []);
 

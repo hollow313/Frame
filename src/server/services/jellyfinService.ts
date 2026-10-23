@@ -1,7 +1,27 @@
 import { getSetting } from './settingsService.js';
 import { assertSafeTarget } from './urlGuard.js';
+import { TMDBService } from './tmdbService.js';
 import db from '../db/index.js';
 import { logger } from '../utils/logger.js';
+
+interface CachedJellyfinItem {
+  id: string;
+  name: string;
+  originalTitle?: string;
+  type: 'movie' | 'tv';
+  tmdbId?: string;
+  year?: number;
+}
+
+interface JellyfinLibraryCache {
+  expiresAt: number;
+  serverUrl: string;
+  byTmdbKey: Map<string, CachedJellyfinItem>;
+  allItems: CachedJellyfinItem[];
+}
+
+const libraryCacheMap = new Map<string, JellyfinLibraryCache>();
+const LIBRARY_CACHE_TTL_MS = 5 * 60 * 1000;
 
 export interface JellyfinPlayingItem {
   id: string;
@@ -18,11 +38,131 @@ export interface JellyfinPlayingItem {
 
 export class JellyfinService {
   public static getServerUrl(): string {
-    return getSetting('JELLYFIN_URL').replace(/\/$/, '').trim();
+    const globalUrl = getSetting('JELLYFIN_URL').replace(/\/$/, '').trim();
+    if (globalUrl) return globalUrl;
+    try {
+      const row = db
+        .prepare("SELECT jellyfin_server_url FROM users WHERE jellyfin_server_url IS NOT NULL AND jellyfin_server_url != '' LIMIT 1")
+        .get() as { jellyfin_server_url?: string } | undefined;
+      return (row?.jellyfin_server_url || '').replace(/\/$/, '').trim();
+    } catch {
+      return '';
+    }
   }
 
   public static isConfigured(): boolean {
     return Boolean(this.getServerUrl());
+  }
+
+  public static clearCache(): void {
+    libraryCacheMap.clear();
+  }
+
+  private static resolveCredentials(frameUserId: number): {
+    userId: string;
+    token: string;
+    serverUrl: string;
+  } | null {
+    const userRow = db
+      .prepare('SELECT jellyfin_user_id, jellyfin_token, jellyfin_server_url FROM users WHERE id = ?')
+      .get(frameUserId) as any;
+
+    if (userRow?.jellyfin_user_id && userRow?.jellyfin_token) {
+      const url = (userRow.jellyfin_server_url || this.getServerUrl()).replace(/\/$/, '').trim();
+      if (url) {
+        return {
+          userId: userRow.jellyfin_user_id,
+          token: userRow.jellyfin_token,
+          serverUrl: url,
+        };
+      }
+    }
+
+    // Fallback : utiliser n'importe quel compte lié sur le serveur (ex: admin) pour vérifier la disponibilité dans la médiathèque
+    const fallbackRow = db
+      .prepare(
+        "SELECT jellyfin_user_id, jellyfin_token, jellyfin_server_url FROM users WHERE jellyfin_user_id IS NOT NULL AND jellyfin_token IS NOT NULL LIMIT 1"
+      )
+      .get() as any;
+
+    if (fallbackRow?.jellyfin_user_id && fallbackRow?.jellyfin_token) {
+      const url = (fallbackRow.jellyfin_server_url || this.getServerUrl()).replace(/\/$/, '').trim();
+      if (url) {
+        return {
+          userId: fallbackRow.jellyfin_user_id,
+          token: fallbackRow.jellyfin_token,
+          serverUrl: url,
+        };
+      }
+    }
+
+    return null;
+  }
+
+  private static async getLibraryIndex(creds: {
+    userId: string;
+    token: string;
+    serverUrl: string;
+  }): Promise<JellyfinLibraryCache | null> {
+    const cacheKey = `${creds.serverUrl}|${creds.userId}`;
+    const existing = libraryCacheMap.get(cacheKey);
+    if (existing && existing.expiresAt > Date.now()) {
+      return existing;
+    }
+
+    try {
+      await assertSafeTarget(creds.serverUrl);
+      const res = await fetch(
+        `${creds.serverUrl}/Users/${creds.userId}/Items?Recursive=true&IncludeItemTypes=Movie,Series&Fields=ProviderIds,ProductionYear,OriginalTitle`,
+        {
+          headers: {
+            ...this.getAuthHeaders(creds.token),
+            'X-MediaBrowser-Token': creds.token,
+          },
+          redirect: 'manual',
+          signal: AbortSignal.timeout(12000),
+        }
+      );
+
+      if (!res.ok) return null;
+
+      const data = await res.json();
+      const rawItems = Array.isArray(data.Items) ? data.Items : [];
+      const byTmdbKey = new Map<string, CachedJellyfinItem>();
+      const allItems: CachedJellyfinItem[] = [];
+
+      for (const it of rawItems) {
+        const type: 'movie' | 'tv' = it.Type === 'Movie' ? 'movie' : 'tv';
+        const pids = it.ProviderIds || {};
+        const rawTmdb = pids.Tmdb || pids.tmdb || pids.TMDB;
+        const tmdbId = rawTmdb ? String(rawTmdb).trim() : undefined;
+
+        const cached: CachedJellyfinItem = {
+          id: it.Id,
+          name: it.Name || '',
+          originalTitle: it.OriginalTitle || undefined,
+          type,
+          tmdbId,
+          year: it.ProductionYear ? Number(it.ProductionYear) : undefined,
+        };
+
+        allItems.push(cached);
+        if (tmdbId) {
+          byTmdbKey.set(`${type}:${tmdbId}`, cached);
+        }
+      }
+
+      const entry: JellyfinLibraryCache = {
+        expiresAt: Date.now() + LIBRARY_CACHE_TTL_MS,
+        serverUrl: creds.serverUrl,
+        byTmdbKey,
+        allItems,
+      };
+      libraryCacheMap.set(cacheKey, entry);
+      return entry;
+    } catch {
+      return null;
+    }
   }
 
   private static getAuthHeaders(token?: string): Record<string, string> {
@@ -189,7 +329,7 @@ export class JellyfinService {
   }
 
   /**
-   * Vérifier si un média (par son TMDB ID) est présent dans la médiathèque Jellyfin de l'utilisateur
+   * Vérifier si un média (par son TMDB ID) est présent dans la médiathèque Jellyfin (compatible Jellyfin 10.8, 10.9+ et 12.x)
    */
   public static async findItemByTmdbId(
     frameUserId: number,
@@ -198,27 +338,62 @@ export class JellyfinService {
     expectedTitle?: string,
     expectedYear?: number
   ): Promise<{ inJellyfin: boolean; itemId?: string; name?: string; serverUrl?: string }> {
-    const userRow = db
-      .prepare('SELECT jellyfin_user_id, jellyfin_token, jellyfin_server_url FROM users WHERE id = ?')
-      .get(frameUserId) as any;
-
-    const url = (userRow?.jellyfin_server_url || this.getServerUrl()).replace(/\/$/, '').trim();
-    if (!url || !userRow || !userRow.jellyfin_user_id || !userRow.jellyfin_token) {
+    const creds = this.resolveCredentials(frameUserId);
+    if (!creds) {
       return { inJellyfin: false };
     }
 
+    const { userId, token, serverUrl: url } = creds;
+
     try {
       await assertSafeTarget(url);
-      const includeType = mediaType === 'movie' ? 'Movie' : 'Series';
       const targetTmdbStr = String(tmdbId);
 
-      // Stratégie 1 : Recherche par ProviderIds=Tmdb.xxxx
+      // Stratégie 1 : Index complet en mémoire de la médiathèque Jellyfin (ultra-rapide et fiable sur Jellyfin v10.9+ / v12.x)
+      const index = await this.getLibraryIndex(creds);
+      if (index) {
+        const directMatch = index.byTmdbKey.get(`${mediaType}:${targetTmdbStr}`);
+        if (directMatch) {
+          return {
+            inJellyfin: true,
+            itemId: directMatch.id,
+            name: directMatch.name,
+            serverUrl: url,
+          };
+        }
+
+        if (expectedTitle) {
+          const cleanExpected = expectedTitle.trim().toLowerCase();
+          const titleMatch = index.allItems.find((it) => {
+            if (it.type !== mediaType) return false;
+            if (it.tmdbId && it.tmdbId !== targetTmdbStr) return false;
+            const nameMatches =
+              it.name.trim().toLowerCase() === cleanExpected ||
+              it.originalTitle?.trim().toLowerCase() === cleanExpected;
+            const yearMatches =
+              !expectedYear || !it.year || Math.abs(it.year - expectedYear) <= 1;
+            return nameMatches && yearMatches;
+          });
+
+          if (titleMatch) {
+            return {
+              inJellyfin: true,
+              itemId: titleMatch.id,
+              name: titleMatch.name,
+              serverUrl: url,
+            };
+          }
+        }
+      }
+
+      // Stratégie 2 : Recherche directe par AnyProviderIdEquals + SearchTerm en fallback
+      const includeType = mediaType === 'movie' ? 'Movie' : 'Series';
       const res = await fetch(
-        `${url}/Users/${userRow.jellyfin_user_id}/Items?Recursive=true&IncludeItemTypes=${includeType}&Fields=ProviderIds,ProductionYear,OriginalTitle&AnyProviderIdEquals=tmdb.${tmdbId}`,
+        `${url}/Users/${userId}/Items?Recursive=true&IncludeItemTypes=${includeType}&Fields=ProviderIds,ProductionYear,OriginalTitle&AnyProviderIdEquals=tmdb.${tmdbId}`,
         {
           headers: {
-            ...this.getAuthHeaders(userRow.jellyfin_token),
-            'X-MediaBrowser-Token': userRow.jellyfin_token,
+            ...this.getAuthHeaders(token),
+            'X-MediaBrowser-Token': token,
           },
           redirect: 'manual',
           signal: AbortSignal.timeout(8000),
@@ -245,14 +420,13 @@ export class JellyfinService {
         }
       }
 
-      // Stratégie 2 : Recherche textuelle stricte par SearchTerm si un titre est fourni
       if (expectedTitle) {
         const searchRes = await fetch(
-          `${url}/Users/${userRow.jellyfin_user_id}/Items?Recursive=true&IncludeItemTypes=${includeType}&Fields=ProviderIds,ProductionYear,OriginalTitle&SearchTerm=${encodeURIComponent(expectedTitle)}&Limit=20`,
+          `${url}/Users/${userId}/Items?Recursive=true&IncludeItemTypes=${includeType}&Fields=ProviderIds,ProductionYear,OriginalTitle&SearchTerm=${encodeURIComponent(expectedTitle)}&Limit=20`,
           {
             headers: {
-              ...this.getAuthHeaders(userRow.jellyfin_token),
-              'X-MediaBrowser-Token': userRow.jellyfin_token,
+              ...this.getAuthHeaders(token),
+              'X-MediaBrowser-Token': token,
             },
             redirect: 'manual',
             signal: AbortSignal.timeout(8000),
@@ -356,6 +530,7 @@ export class JellyfinService {
 
   /**
    * Synchroniser les films et séries marqués comme "Lus" (Played) dans Jellyfin vers Frame
+   * avec enrichissement des affiches, durées et dates via Jellyfin + TMDB
    */
   public static async syncWatchedFromJellyfin(frameUserId: number): Promise<{ importedMovies: number; importedShows: number }> {
     const userRow = db
@@ -364,10 +539,11 @@ export class JellyfinService {
 
     const url = (userRow?.jellyfin_server_url || this.getServerUrl()).replace(/\/$/, '').trim();
     if (!url || !userRow || !userRow.jellyfin_user_id || !userRow.jellyfin_token) {
-      throw new Error('Votre compte Jellyfin n\'est pas encore lié.');
+      throw new Error("Votre compte Jellyfin n'est pas encore lié.");
     }
 
     await assertSafeTarget(url);
+    this.clearCache();
 
     let importedMovies = 0;
     let importedShows = 0;
@@ -378,27 +554,62 @@ export class JellyfinService {
     };
 
     const insertStmt = db.prepare(`
-      INSERT INTO watched_items (user_id, tmdb_id, media_type, title, watched_at, season_number, episode_number)
-      VALUES (?, ?, ?, ?, ?, 0, 0)
+      INSERT INTO watched_items (
+        user_id, tmdb_id, media_type, title, poster_path, backdrop_path,
+        release_date, runtime, overview, watched_at, season_number, episode_number
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0)
       ON CONFLICT(user_id, tmdb_id, media_type, season_number, episode_number) DO UPDATE SET
-        title = excluded.title,
+        title = COALESCE(watched_items.title, excluded.title),
+        poster_path = COALESCE(watched_items.poster_path, excluded.poster_path),
+        backdrop_path = COALESCE(watched_items.backdrop_path, excluded.backdrop_path),
+        release_date = COALESCE(watched_items.release_date, excluded.release_date),
+        runtime = CASE WHEN watched_items.runtime > 0 THEN watched_items.runtime ELSE excluded.runtime END,
+        overview = COALESCE(watched_items.overview, excluded.overview),
         watched_at = COALESCE(watched_items.watched_at, excluded.watched_at)
     `);
 
     const nowIso = new Date().toISOString();
+    const toEnrich: Array<{ tmdbId: number; mediaType: 'movie' | 'tv' }> = [];
 
     // 1. Récupérer les films vus avec leurs ProviderIds (Tmdb)
     const moviesRes = await fetch(
-      `${url}/Users/${userRow.jellyfin_user_id}/Items?IncludeItemTypes=Movie&Recursive=true&Filters=IsPlayed&Fields=ProviderIds`,
+      `${url}/Users/${userRow.jellyfin_user_id}/Items?IncludeItemTypes=Movie&Recursive=true&Filters=IsPlayed&Fields=ProviderIds,ProductionYear,PremiereDate,RunTimeTicks,Overview`,
       { headers, redirect: 'manual', signal: AbortSignal.timeout(15000) }
     );
 
     if (moviesRes.ok) {
       const moviesData = await moviesRes.json();
       for (const item of moviesData.Items || []) {
-        const tmdbId = item.ProviderIds?.Tmdb ? parseInt(item.ProviderIds.Tmdb, 10) : null;
+        const pids = item.ProviderIds || {};
+        const rawTmdb = pids.Tmdb || pids.tmdb || pids.TMDB;
+        const tmdbId = rawTmdb ? parseInt(String(rawTmdb), 10) : null;
         if (tmdbId) {
-          insertStmt.run(frameUserId, tmdbId, 'movie', item.Name || 'Film', nowIso);
+          const releaseDate = item.PremiereDate
+            ? String(item.PremiereDate).slice(0, 10)
+            : item.ProductionYear
+            ? `${item.ProductionYear}-01-01`
+            : null;
+          const runtime = item.RunTimeTicks
+            ? Math.max(1, Math.round(Number(item.RunTimeTicks) / 600000000))
+            : 115;
+          const watchedAt = item.UserData?.LastPlayedDate
+            ? new Date(item.UserData.LastPlayedDate).toISOString()
+            : nowIso;
+
+          insertStmt.run(
+            frameUserId,
+            tmdbId,
+            'movie',
+            item.Name || 'Film',
+            null,
+            null,
+            releaseDate,
+            runtime,
+            item.Overview || null,
+            watchedAt
+          );
+          toEnrich.push({ tmdbId, mediaType: 'movie' });
           importedMovies++;
         }
       }
@@ -406,17 +617,82 @@ export class JellyfinService {
 
     // 2. Récupérer les séries vues
     const showsRes = await fetch(
-      `${url}/Users/${userRow.jellyfin_user_id}/Items?IncludeItemTypes=Series&Recursive=true&Filters=IsPlayed&Fields=ProviderIds`,
+      `${url}/Users/${userRow.jellyfin_user_id}/Items?IncludeItemTypes=Series&Recursive=true&Filters=IsPlayed&Fields=ProviderIds,ProductionYear,PremiereDate,RunTimeTicks,Overview`,
       { headers, redirect: 'manual', signal: AbortSignal.timeout(15000) }
     );
 
     if (showsRes.ok) {
       const showsData = await showsRes.json();
       for (const item of showsData.Items || []) {
-        const tmdbId = item.ProviderIds?.Tmdb ? parseInt(item.ProviderIds.Tmdb, 10) : null;
+        const pids = item.ProviderIds || {};
+        const rawTmdb = pids.Tmdb || pids.tmdb || pids.TMDB;
+        const tmdbId = rawTmdb ? parseInt(String(rawTmdb), 10) : null;
         if (tmdbId) {
-          insertStmt.run(frameUserId, tmdbId, 'tv', item.Name || 'Série', nowIso);
+          const releaseDate = item.PremiereDate
+            ? String(item.PremiereDate).slice(0, 10)
+            : item.ProductionYear
+            ? `${item.ProductionYear}-01-01`
+            : null;
+          const watchedAt = item.UserData?.LastPlayedDate
+            ? new Date(item.UserData.LastPlayedDate).toISOString()
+            : nowIso;
+
+          insertStmt.run(
+            frameUserId,
+            tmdbId,
+            'tv',
+            item.Name || 'Série',
+            null,
+            null,
+            releaseDate,
+            450,
+            item.Overview || null,
+            watchedAt
+          );
+          toEnrich.push({ tmdbId, mediaType: 'tv' });
           importedShows++;
+        }
+      }
+    }
+
+    // 3. Enrichir les affiches (poster_path, backdrop_path, genres) depuis TMDB si configuré
+    if (TMDBService.isConfigured() && toEnrich.length > 0) {
+      const updateMetaStmt = db.prepare(`
+        UPDATE watched_items
+        SET poster_path = COALESCE(poster_path, ?),
+            backdrop_path = COALESCE(backdrop_path, ?),
+            release_date = COALESCE(release_date, ?),
+            genres = COALESCE(genres, ?),
+            overview = COALESCE(overview, ?)
+        WHERE user_id = ? AND tmdb_id = ? AND media_type = ?
+      `);
+
+      const missingPosterRows = db
+        .prepare(
+          'SELECT tmdb_id, media_type FROM watched_items WHERE user_id = ? AND poster_path IS NULL AND season_number = 0 LIMIT 40'
+        )
+        .all(frameUserId) as Array<{ tmdb_id: number; media_type: 'movie' | 'tv' }>;
+
+      for (const row of missingPosterRows) {
+        try {
+          const details = await TMDBService.getMediaDetails(
+            row.media_type === 'movie' ? 'movie' : 'tv',
+            row.tmdb_id
+          );
+          if (details) {
+            updateMetaStmt.run(
+              details.poster_path || null,
+              details.backdrop_path || null,
+              details.release_date || null,
+              details.genres ? JSON.stringify(details.genres) : null,
+              details.overview || null,
+              frameUserId,
+              row.tmdb_id,
+              row.media_type
+            );
+          }
+        } catch {
+          // Ignorer les erreurs individuelles TMDB
         }
       }
     }

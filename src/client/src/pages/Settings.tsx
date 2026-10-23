@@ -138,43 +138,6 @@ export const Settings: React.FC = () => {
         if (info.serverUrl) setUserJellyfinUrl(info.serverUrl);
       }).catch(() => {});
     }
-
-    // Traiter un retour de redirection OAuth Simkl si ?code= est présent
-    const urlParams = new URLSearchParams(window.location.search);
-    const code = urlParams.get('code');
-    if (code) {
-      const verifier = localStorage.getItem('simkl_oauth_verifier');
-      const redirectUri = localStorage.getItem('simkl_oauth_redirect_uri') || `${window.location.origin}/settings`;
-      const savedClientId = localStorage.getItem('simkl_oauth_client_id') || undefined;
-      const savedClientSecret = localStorage.getItem('simkl_oauth_client_secret') || undefined;
-
-      if (verifier) {
-        setSimklConnectingOAuth(true);
-        api.callbackSimklOAuth({
-          code,
-          codeVerifier: verifier,
-          redirectUri,
-          clientId: savedClientId,
-          clientSecret: savedClientSecret,
-        })
-          .then(async (res) => {
-            alert(res.message || 'Compte Simkl lié avec succès !');
-            localStorage.removeItem('simkl_oauth_verifier');
-            localStorage.removeItem('simkl_oauth_state');
-            localStorage.removeItem('simkl_oauth_redirect_uri');
-            localStorage.removeItem('simkl_oauth_client_id');
-            localStorage.removeItem('simkl_oauth_client_secret');
-            window.history.replaceState({}, document.title, window.location.pathname);
-            await refreshUser();
-          })
-          .catch((err) => {
-            setSimklOAuthError(err.message || 'Erreur lors de la validation OAuth Simkl');
-          })
-          .finally(() => {
-            setSimklConnectingOAuth(false);
-          });
-      }
-    }
   }, [isAdmin, user]);
 
   const loadSettings = async () => {
@@ -205,7 +168,11 @@ export const Settings: React.FC = () => {
         if (s.RADARR_URL?.value) setRadarrUrl(s.RADARR_URL.value);
         if (s.DEFAULT_LANGUAGE?.value) setDefaultLanguage(s.DEFAULT_LANGUAGE.value);
         if (s.SIMKL_CLIENT_ID?.value) setSimklClientId(s.SIMKL_CLIENT_ID.value);
-        if (s.JELLYFIN_URL?.value) setJellyfinUrl(s.JELLYFIN_URL.value);
+        if (s.JELLYFIN_URL?.value) {
+          setJellyfinUrl(s.JELLYFIN_URL.value);
+        } else if (user?.jellyfinServerUrl) {
+          setJellyfinUrl(user.jellyfinServerUrl);
+        }
         if (s.INTERNAL_HOSTS_ALLOWLIST?.value !== undefined) setInternalHostsAllowlist(s.INTERNAL_HOSTS_ALLOWLIST.value || '');
 
         setAllowRegistration(s.ALLOW_REGISTRATION?.value === 'true');
@@ -655,8 +622,16 @@ export const Settings: React.FC = () => {
                   <Tv className="w-4 h-4" />
                 </div>
                 <div>
-                  <h3 className="text-sm font-bold text-white">Serveur Jellyfin (Global)</h3>
-                  <p className="text-xs text-slate-400">Suivi exact du statut de visionnage en cours</p>
+                  <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                    <span>Serveur Jellyfin (Global)</span>
+                    {(jellyfinUrl || user?.jellyfinConnected) && (
+                      <span className="text-[10px] font-bold text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-full flex items-center gap-1">
+                        <CheckCircle2 className="w-3 h-3" />
+                        {user?.jellyfinConnected ? 'Lié & Actif' : 'Configuré'}
+                      </span>
+                    )}
+                  </h3>
+                  <p className="text-xs text-slate-400">Suivi exact du statut de visionnage en cours et disponibilité médiathèque</p>
                 </div>
               </div>
               <button

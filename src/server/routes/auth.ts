@@ -20,7 +20,7 @@ function getCookieOpts(req: Request) {
     sameSite: 'lax' as const,
     secure: isHttps,
     path: '/',
-    maxAge: 7 * 24 * 60 * 60 * 1000,
+    maxAge: 365 * 24 * 60 * 60 * 1000,
   };
 }
 
@@ -356,6 +356,14 @@ router.get('/me', authenticateToken, (req: AuthenticatedRequest, res: Response) 
       return;
     }
 
+    const freshToken = generateToken({
+      id: userRow.id,
+      username: userRow.username,
+      role: userRow.role,
+      displayName: userRow.display_name,
+    });
+    res.cookie('frame_token', freshToken, getCookieOpts(req));
+
     res.json({
       id: userRow.id,
       username: userRow.username,
@@ -376,6 +384,7 @@ router.get('/me', authenticateToken, (req: AuthenticatedRequest, res: Response) 
       prefIncludeTv: userRow.pref_include_tv !== 0,
       prefIncludeAnime: userRow.pref_include_anime === 1,
       createdAt: userRow.created_at,
+      token: freshToken,
     });
   } catch (err: any) {
     serverError(res, err, 'AuthMe');

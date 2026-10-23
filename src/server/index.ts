@@ -62,6 +62,15 @@ app.use(
   })
 );
 
+// En-tête Private Network Access (évite les blocages CORS/LNA sur réseau local Chrome/Edge)
+app.use((req, res, next) => {
+  res.setHeader('Access-Control-Allow-Private-Network', 'true');
+  if (req.headers['access-control-request-private-network'] === 'true') {
+    res.setHeader('Access-Control-Allow-Private-Network', 'true');
+  }
+  next();
+});
+
 // Configuration CORS : autorise toujours la même origine (Host courant pour <script crossorigin>) et les origines listées dans CORS_ORIGINS (F-06)
 const allowedOrigins = (process.env.CORS_ORIGINS || '')
   .split(',')

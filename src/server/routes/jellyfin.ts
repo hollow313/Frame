@@ -64,10 +64,12 @@ router.post('/link', async (req: AuthenticatedRequest, res: Response) => {
       authResult = await JellyfinService.authenticateUser(String(username), password, cleanServerUrl);
     }
 
-    // Sauvegarder comme URL globale si aucune n'était encore définie et que l'utilisateur est admin
-    if (req.user!.role === 'admin' && !JellyfinService.getServerUrl() && authResult.serverUrl) {
+    // Sauvegarder comme URL globale si l'utilisateur est admin
+    if (req.user!.role === 'admin' && authResult.serverUrl) {
       setSetting('JELLYFIN_URL', authResult.serverUrl);
     }
+
+    JellyfinService.clearCache();
 
     db.prepare('UPDATE users SET jellyfin_user_id = ?, jellyfin_token = ?, jellyfin_server_url = ? WHERE id = ?').run(
       authResult.userId,

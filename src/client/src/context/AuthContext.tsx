@@ -26,12 +26,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const status = await api.getAuthStatus();
       setIsInitialized(status.initialized);
 
-      const token = localStorage.getItem('frame_token');
-      if (token) {
-        try {
-          const me = await api.getMe();
-          setUser(me);
-        } catch (e) {
+      try {
+        const me: any = await api.getMe();
+        if (me?.token) {
+          setToken(me.token);
+        }
+        setUser(me);
+      } catch (e: any) {
+        if (e?.status === 401) {
           setToken(null);
           setUser(null);
         }
@@ -74,7 +76,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const refreshUser = async () => {
     try {
-      const me = await api.getMe();
+      const me: any = await api.getMe();
+      if (me?.token) {
+        setToken(me.token);
+      }
       setUser(me);
     } catch (e) {
       // Ignorer
