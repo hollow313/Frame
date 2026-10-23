@@ -656,45 +656,49 @@ export class JellyfinService {
     }
 
     // 3. Enrichir les affiches (poster_path, backdrop_path, genres) depuis TMDB si configuré
-    if (TMDBService.isConfigured() && toEnrich.length > 0) {
-      const updateMetaStmt = db.prepare(`
-        UPDATE watched_items
-        SET poster_path = COALESCE(poster_path, ?),
-            backdrop_path = COALESCE(backdrop_path, ?),
-            release_date = COALESCE(release_date, ?),
-            genres = COALESCE(genres, ?),
-            overview = COALESCE(overview, ?)
-        WHERE user_id = ? AND tmdb_id = ? AND media_type = ?
-      `);
+    try {
+      if (Boolean(getSetting('TMDB_API_KEY')) && toEnrich.length > 0) {
+        const updateMetaStmt = db.prepare(`
+          UPDATE watched_items
+          SET poster_path = COALESCE(poster_path, ?),
+              backdrop_path = COALESCE(backdrop_path, ?),
+              release_date = COALESCE(release_date, ?),
+              genres = COALESCE(genres, ?),
+              overview = COALESCE(overview, ?)
+          WHERE user_id = ? AND tmdb_id = ? AND media_type = ?
+        `);
 
-      const missingPosterRows = db
-        .prepare(
-          'SELECT tmdb_id, media_type FROM watched_items WHERE user_id = ? AND poster_path IS NULL AND season_number = 0 LIMIT 40'
-        )
-        .all(frameUserId) as Array<{ tmdb_id: number; media_type: 'movie' | 'tv' }>;
+        const missingPosterRows = db
+          .prepare(
+            'SELECT tmdb_id, media_type FROM watched_items WHERE user_id = ? AND poster_path IS NULL AND season_number = 0 LIMIT 40'
+          )
+          .all(frameUserId) as Array<{ tmdb_id: number; media_type: 'movie' | 'tv' }>;
 
-      for (const row of missingPosterRows) {
-        try {
-          const details = await TMDBService.getMediaDetails(
-            row.media_type === 'movie' ? 'movie' : 'tv',
-            row.tmdb_id
-          );
-          if (details) {
-            updateMetaStmt.run(
-              details.poster_path || null,
-              details.backdrop_path || null,
-              details.release_date || null,
-              details.genres ? JSON.stringify(details.genres) : null,
-              details.overview || null,
-              frameUserId,
-              row.tmdb_id,
-              row.media_type
+        for (const row of missingPosterRows) {
+          try {
+            const details = await TMDBService.getDetails(
+              row.media_type === 'movie' ? 'movie' : 'tv',
+              row.tmdb_id
             );
+            if (details) {
+              updateMetaStmt.run(
+                details.poster_path || null,
+                details.backdrop_path || null,
+                details.release_date || null,
+                details.genres ? JSON.stringify(details.genres) : null,
+                details.overview || null,
+                frameUserId,
+                row.tmdb_id,
+                row.media_type
+              );
+            }
+          } catch {
+            // Ignorer les erreurs individuelles TMDB
           }
-        } catch {
-          // Ignorer les erreurs individuelles TMDB
         }
       }
+    } catch {
+      // Ne jamais faire échouer la synchronisation Jellyfin si l'enrichissement TMDB rencontre un problème
     }
 
     return { importedMovies, importedShows };

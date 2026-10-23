@@ -84,6 +84,14 @@ export interface TMDBMediaItem {
 }
 
 export class TMDBService {
+  public static isConfigured(): boolean {
+    return Boolean(getSetting('TMDB_API_KEY'));
+  }
+
+  public static async getMediaDetails(mediaType: 'movie' | 'tv', id: number): Promise<TMDBMediaItem> {
+    return this.getDetails(mediaType, id);
+  }
+
   private static getApiKey(): string {
     const key = getSetting('TMDB_API_KEY');
     if (!key) {
