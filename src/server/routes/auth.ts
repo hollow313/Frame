@@ -299,9 +299,29 @@ router.post('/login', loginLimiter, async (req: Request, res: Response) => {
       username: userRow.username,
       role: userRow.role,
       displayName: userRow.display_name,
+      avatarUrl: userRow.avatar_url,
+      authProvider: userRow.auth_provider || 'local',
+      simklConnected: Boolean(userRow.simkl_token),
+      simklClientId: userRow.simkl_client_id || '',
+      simklLastSyncAt: userRow.simkl_last_sync_at || null,
+      simklLastSyncStatus: userRow.simkl_last_sync_status || null,
+      simklLastSyncError: userRow.simkl_last_sync_error || null,
+      simklAutoSync: userRow.simkl_auto_sync !== 0,
+      jellyfinConnected: Boolean(userRow.jellyfin_token),
+      jellyfinServerUrl: userRow.jellyfin_server_url || '',
+      seerUserId: userRow.seer_user_id || null,
+      prefIncludeMovies: userRow.pref_include_movies !== 0,
+      prefIncludeTv: userRow.pref_include_tv !== 0,
+      prefIncludeAnime: userRow.pref_include_anime === 1,
+      createdAt: userRow.created_at,
     };
 
-    const token = generateToken(authUser);
+    const token = generateToken({
+      id: userRow.id,
+      username: userRow.username,
+      role: userRow.role,
+      displayName: userRow.display_name,
+    });
 
     res.cookie('frame_token', token, getCookieOpts(req));
 

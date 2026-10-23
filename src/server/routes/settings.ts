@@ -1,5 +1,5 @@
 import { Router, Response } from 'express';
-import { getAllSettingsMasked, setSetting, SettingKey, getSetting } from '../services/settingsService.js';
+import { getAllSettingsMasked, setSetting, SettingKey, getSetting, SECRET_KEYS } from '../services/settingsService.js';
 import { authenticateToken, requireAdmin, AuthenticatedRequest } from '../middleware/auth.js';
 import { SeerService } from '../services/seerService.js';
 import { SonarrService } from '../services/sonarrService.js';
@@ -95,11 +95,13 @@ router.put('/', authenticateToken, requireAdmin, (req: AuthenticatedRequest, res
     ];
 
     for (const key of validKeys) {
-      if (updates[key] !== undefined) {
-        // Ignorer si c'est une valeur masquée inchangée (contenant ••••) ou vide pour une clé secrète déjà configurée
-        if (typeof updates[key] === 'string' && !updates[key].includes('••••')) {
-          setSetting(key, updates[key]);
-        }
+      if (updates[key] !== undefined && typeof updates[key] === 'string') {
+        const val = updates[key].trim();
+        // Ignorer si c'est une valeur masquée inchangée (contenant ••••)
+        if (val.includes('••••')) continue;
+        // Ignorer si c'est une chaîne vide envoyée pour une clé secrète déjà configurée (évite d'écraser TMDB_API_KEY, SEER_API_KEY, etc.)
+        if (SECRET_KEYS.has(key) && val === '') continue;
+        setSetting(key, val);
       }
     }
 

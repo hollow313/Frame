@@ -32,10 +32,12 @@ export type SettingKey =
   | 'SSO_TRUSTED_PROXIES'
   | 'INTERNAL_HOSTS_ALLOWLIST';
 
+const DATA_DIR = process.env.DATA_DIR || path.resolve(process.cwd(), 'data');
 const CONFIG_DIR = process.env.CONFIG_DIR || path.resolve(process.cwd(), 'config');
+const DATA_SETTINGS_FILE = path.join(DATA_DIR, 'settings.json');
 const CONFIG_FILE = path.join(CONFIG_DIR, 'settings.json');
 
-const SECRET_KEYS = new Set<SettingKey>([
+export const SECRET_KEYS = new Set<SettingKey>([
   'TMDB_API_KEY',
   'SEER_API_KEY',
   'SONARR_API_KEY',
@@ -68,29 +70,45 @@ function ensureCacheLoaded(): Map<string, string> {
   if (settingsCache) return settingsCache;
   settingsCache = new Map<string, string>();
 
-  // 1. Load from config/settings.json fallback first
-  try {
-    if (fs.existsSync(CONFIG_FILE)) {
-      const content = fs.readFileSync(CONFIG_FILE, 'utf-8');
-      const parsed = JSON.parse(content);
-      if (parsed && typeof parsed === 'object') {
-        for (const [k, v] of Object.entries(parsed)) {
-          if (typeof v === 'string' && v.trim() !== '') {
-            settingsCache.set(k, decryptSecret(v.trim()));
+  // 1. Load from config/settings.json and data/settings.json fallback first
+  for (const file of [CONFIG_FILE, DATA_SETTINGS_FILE]) {
+    try {
+      if (fs.existsSync(file)) {
+        const content = fs.readFileSync(file, 'utf-8');
+        const parsed = JSON.parse(content);
+        if (parsed && typeof parsed === 'object') {
+          for (const [k, v] of Object.entries(parsed)) {
+            if (typeof v === 'string' && v.trim() !== '') {
+              settingsCache.set(k, decryptSecret(v.trim()));
+            }
           }
         }
       }
+    } catch (e) {
+      logger.warn('Settings', `Impossible de lire ${file}`, { error: String(e) });
     }
-  } catch (e) {
-    logger.warn('Settings', 'Impossible de lire config/settings.json', { error: String(e) });
   }
 
   // 2. Load from SQLite server_settings (overrides file)
+  const dbKeys = new Set<string>();
   try {
     const rows = db.prepare('SELECT key, value FROM server_settings').all() as Array<{ key: string; value: string }>;
     for (const row of rows) {
       if (row.value && row.value.trim() !== '') {
+        dbKeys.add(row.key);
         settingsCache.set(row.key, decryptSecret(row.value.trim()));
+      }
+    }
+
+    // Si des clés étaient présentes dans settings.json mais absentes de SQLite, les ré-insérer dans SQLite
+    const insertStmt = db.prepare(`
+      INSERT OR IGNORE INTO server_settings (key, value, updated_at)
+      VALUES (?, ?, CURRENT_TIMESTAMP)
+    `);
+    for (const [k, v] of settingsCache.entries()) {
+      if (!dbKeys.has(k) && v) {
+        const toStore = SECRET_KEYS.has(k as SettingKey) ? encryptSecret(v) : v;
+        insertStmt.run(k, toStore);
       }
     }
   } catch (e) {
@@ -171,19 +189,24 @@ export function setSetting(key: SettingKey, value: string): void {
     cache.set(key, trimmed);
   }
 
-  // Persist to config/settings.json
-  try {
-    if (!fs.existsSync(CONFIG_DIR)) {
-      fs.mkdirSync(CONFIG_DIR, { recursive: true });
+  // Persist to both /app/data/settings.json and /app/config/settings.json
+  for (const [dir, file] of [
+    [DATA_DIR, DATA_SETTINGS_FILE],
+    [CONFIG_DIR, CONFIG_FILE],
+  ] as const) {
+    try {
+      if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true });
+      }
+      let currentConfig: Record<string, string> = {};
+      if (fs.existsSync(file)) {
+        currentConfig = JSON.parse(fs.readFileSync(file, 'utf-8'));
+      }
+      currentConfig[key] = toStore;
+      fs.writeFileSync(file, JSON.stringify(currentConfig, null, 2), { encoding: 'utf-8', mode: 0o600 });
+    } catch (e) {
+      logger.warn('Settings', `Impossible de sauvegarder dans ${file}`, { error: String(e) });
     }
-    let currentConfig: Record<string, string> = {};
-    if (fs.existsSync(CONFIG_FILE)) {
-      currentConfig = JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf-8'));
-    }
-    currentConfig[key] = toStore;
-    fs.writeFileSync(CONFIG_FILE, JSON.stringify(currentConfig, null, 2), { encoding: 'utf-8', mode: 0o600 });
-  } catch (e) {
-    logger.warn('Settings', 'Impossible de sauvegarder dans config/settings.json', { error: String(e) });
   }
 }
 

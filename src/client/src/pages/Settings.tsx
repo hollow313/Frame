@@ -182,6 +182,7 @@ export const Settings: React.FC = () => {
     try {
       if (isAdmin) {
         const s = await api.getSettings();
+        const MASK = '••••••••••••••••';
         setConfiguredSecrets({
           TMDB_API_KEY: Boolean(s.TMDB_API_KEY?.configured),
           SEER_API_KEY: Boolean(s.SEER_API_KEY?.configured),
@@ -189,11 +190,11 @@ export const Settings: React.FC = () => {
           RADARR_API_KEY: Boolean(s.RADARR_API_KEY?.configured),
           LDAP_BIND_PASSWORD: Boolean(s.LDAP_BIND_PASSWORD?.configured),
         });
-        setTmdbKey('');
-        setSeerApiKey('');
-        setSonarrApiKey('');
-        setRadarrApiKey('');
-        setLdapBindPassword('');
+        setTmdbKey(s.TMDB_API_KEY?.configured ? MASK : '');
+        setSeerApiKey(s.SEER_API_KEY?.configured ? MASK : '');
+        setSonarrApiKey(s.SONARR_API_KEY?.configured ? MASK : '');
+        setRadarrApiKey(s.RADARR_API_KEY?.configured ? MASK : '');
+        setLdapBindPassword(s.LDAP_BIND_PASSWORD?.configured ? MASK : '');
 
         if (s.SEER_URL?.value) setSeerUrl(s.SEER_URL.value);
         if (s.SEER_DEFAULT_USER_ID?.value) setSeerDefaultUserId(s.SEER_DEFAULT_USER_ID.value);
@@ -247,11 +248,11 @@ export const Settings: React.FC = () => {
         SSO_HEADER: ssoHeader,
         SSO_TRUSTED_PROXIES: ssoTrustedProxies,
       };
-      if (tmdbKey.trim()) payload.TMDB_API_KEY = tmdbKey.trim();
-      if (seerApiKey.trim()) payload.SEER_API_KEY = seerApiKey.trim();
-      if (sonarrApiKey.trim()) payload.SONARR_API_KEY = sonarrApiKey.trim();
-      if (radarrApiKey.trim()) payload.RADARR_API_KEY = radarrApiKey.trim();
-      if (ldapBindPassword.trim()) payload.LDAP_BIND_PASSWORD = ldapBindPassword.trim();
+      if (tmdbKey.trim() && !tmdbKey.includes('••••')) payload.TMDB_API_KEY = tmdbKey.trim();
+      if (seerApiKey.trim() && !seerApiKey.includes('••••')) payload.SEER_API_KEY = seerApiKey.trim();
+      if (sonarrApiKey.trim() && !sonarrApiKey.includes('••••')) payload.SONARR_API_KEY = sonarrApiKey.trim();
+      if (radarrApiKey.trim() && !radarrApiKey.includes('••••')) payload.RADARR_API_KEY = radarrApiKey.trim();
+      if (ldapBindPassword.trim() && !ldapBindPassword.includes('••••')) payload.LDAP_BIND_PASSWORD = ldapBindPassword.trim();
 
       await api.updateSettings(payload);
       setSaveSuccess(true);
@@ -623,12 +624,19 @@ export const Settings: React.FC = () => {
             </div>
 
             <div>
-              <label className="text-xs font-medium text-slate-300 block mb-1">Clé API TMDB (v3)</label>
+              <label className="text-xs font-medium text-slate-300 flex items-center justify-between mb-1">
+                <span>Clé API TMDB (v3)</span>
+                {configuredSecrets.TMDB_API_KEY && (
+                  <span className="text-[11px] font-bold text-emerald-400 flex items-center gap-1">
+                    <CheckCircle2 className="w-3.5 h-3.5" /> Clé enregistrée et active
+                  </span>
+                )}
+              </label>
               <input
                 type="password"
                 value={tmdbKey}
                 onChange={(e) => setTmdbKey(e.target.value)}
-                placeholder={configuredSecrets.TMDB_API_KEY ? '•••••••• (Configuré — laisser vide pour conserver)' : 'Ex: 3a2b1c...'}
+                placeholder={configuredSecrets.TMDB_API_KEY ? '•••••••• (Déjà configurée — laisser vide pour conserver)' : 'Ex: 3a2b1c...'}
                 className="w-full bg-dark-850 border border-white/10 rounded-xl px-3.5 py-2 text-sm text-slate-100 focus:outline-none focus:border-primary-500"
               />
             </div>
@@ -712,12 +720,19 @@ export const Settings: React.FC = () => {
                 />
               </div>
               <div>
-                <label className="text-xs font-medium text-slate-300 block mb-1">Clé API Seer</label>
+                <label className="text-xs font-medium text-slate-300 flex items-center justify-between mb-1">
+                  <span>Clé API Seer</span>
+                  {configuredSecrets.SEER_API_KEY && (
+                    <span className="text-[11px] font-bold text-emerald-400 flex items-center gap-1">
+                      <CheckCircle2 className="w-3.5 h-3.5" /> Enregistrée
+                    </span>
+                  )}
+                </label>
                 <input
                   type="password"
                   value={seerApiKey}
                   onChange={(e) => setSeerApiKey(e.target.value)}
-                  placeholder={configuredSecrets.SEER_API_KEY ? '•••••••• (Configuré — laisser vide pour conserver)' : 'Clé API Seer...'}
+                  placeholder={configuredSecrets.SEER_API_KEY ? '•••••••• (Déjà configurée — laisser vide pour conserver)' : 'Clé API Seer...'}
                   className="w-full bg-dark-850 border border-white/10 rounded-xl px-3.5 py-2 text-sm text-slate-100 focus:outline-none focus:border-primary-500"
                 />
               </div>
@@ -760,7 +775,12 @@ export const Settings: React.FC = () => {
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div className="p-5 rounded-2xl bg-dark-900 border border-white/5 space-y-3">
               <div className="flex items-center justify-between">
-                <h3 className="text-sm font-bold text-white">Sonarr (Séries TV)</h3>
+                <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                  <span>Sonarr (Séries TV)</span>
+                  {configuredSecrets.SONARR_API_KEY && (
+                    <span className="text-[10px] font-bold text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-full">✓ Clé active</span>
+                  )}
+                </h3>
                 <button
                   type="button"
                   onClick={() => handleTestService('sonarr')}
@@ -808,7 +828,12 @@ export const Settings: React.FC = () => {
 
             <div className="p-5 rounded-2xl bg-dark-900 border border-white/5 space-y-3">
               <div className="flex items-center justify-between">
-                <h3 className="text-sm font-bold text-white">Radarr (Films)</h3>
+                <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                  <span>Radarr (Films)</span>
+                  {configuredSecrets.RADARR_API_KEY && (
+                    <span className="text-[10px] font-bold text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-full">✓ Clé active</span>
+                  )}
+                </h3>
                 <button
                   type="button"
                   onClick={() => handleTestService('radarr')}
