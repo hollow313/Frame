@@ -192,10 +192,14 @@ export function initDatabase() {
 
   // Migrations automatiques pour bases existantes
   const userAlterCols = [
-    'ALTER TABLE users ADD COLUMN auth_provider TEXT DEFAULT "local"',
+    'ALTER TABLE users ADD COLUMN display_name TEXT',
+    'ALTER TABLE users ADD COLUMN avatar_url TEXT',
+    "ALTER TABLE users ADD COLUMN auth_provider TEXT DEFAULT 'local'",
+    'ALTER TABLE users ADD COLUMN simkl_token TEXT',
+    'ALTER TABLE users ADD COLUMN simkl_refresh_token TEXT',
+    'ALTER TABLE users ADD COLUMN simkl_user_id TEXT',
     'ALTER TABLE users ADD COLUMN simkl_client_id TEXT',
     'ALTER TABLE users ADD COLUMN simkl_client_secret TEXT',
-    'ALTER TABLE users ADD COLUMN simkl_refresh_token TEXT',
     'ALTER TABLE users ADD COLUMN simkl_stats_json TEXT',
     'ALTER TABLE users ADD COLUMN simkl_last_sync_at TEXT',
     'ALTER TABLE users ADD COLUMN simkl_last_sync_status TEXT',
@@ -218,7 +222,32 @@ export function initDatabase() {
     }
   }
 
+  // Migrer les anciennes colonnes simkl_access_token / jellyfin_access_token vers simkl_token / jellyfin_token si présentes
+  try {
+    const userCols = db.prepare('PRAGMA table_info(users)').all() as Array<{ name: string }>;
+    const colNames = new Set(userCols.map((c) => c.name));
+    if (colNames.has('simkl_access_token')) {
+      db.exec(
+        'UPDATE users SET simkl_token = COALESCE(simkl_token, simkl_access_token) WHERE simkl_token IS NULL AND simkl_access_token IS NOT NULL'
+      );
+    }
+    if (colNames.has('jellyfin_access_token')) {
+      db.exec(
+        'UPDATE users SET jellyfin_token = COALESCE(jellyfin_token, jellyfin_access_token) WHERE jellyfin_token IS NULL AND jellyfin_access_token IS NOT NULL'
+      );
+    }
+  } catch {
+    // Ignorer
+  }
+
   const watchedAlterCols = [
+    'ALTER TABLE watched_items ADD COLUMN poster_path TEXT',
+    'ALTER TABLE watched_items ADD COLUMN backdrop_path TEXT',
+    'ALTER TABLE watched_items ADD COLUMN release_date TEXT',
+    'ALTER TABLE watched_items ADD COLUMN genres TEXT',
+    'ALTER TABLE watched_items ADD COLUMN overview TEXT',
+    'ALTER TABLE watched_items ADD COLUMN rating REAL',
+    'ALTER TABLE watched_items ADD COLUMN review TEXT',
     'ALTER TABLE watched_items ADD COLUMN runtime INTEGER DEFAULT 0',
     'ALTER TABLE watched_items ADD COLUMN director TEXT',
     'ALTER TABLE watched_items ADD COLUMN director_image TEXT',
@@ -232,6 +261,18 @@ export function initDatabase() {
     } catch {
       // La colonne existe déjà
     }
+  }
+
+  try {
+    const watchedCols = db.prepare('PRAGMA table_info(watched_items)').all() as Array<{ name: string }>;
+    const wColNames = new Set(watchedCols.map((c) => c.name));
+    if (wColNames.has('runtime_minutes')) {
+      db.exec(
+        'UPDATE watched_items SET runtime = COALESCE(NULLIF(runtime, 0), runtime_minutes) WHERE (runtime IS NULL OR runtime = 0) AND runtime_minutes > 0'
+      );
+    }
+  } catch {
+    // Ignorer
   }
 
   // Migration de contrainte UNIQUE sur watched_items pour supporter le suivi par épisode

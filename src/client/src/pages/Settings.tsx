@@ -338,10 +338,14 @@ export const Settings: React.FC = () => {
     }
   };
 
-  // Vérification automatique du code PIN Simkl toutes les 5 secondes dès qu'un code est généré
+  const checkingPinRef = React.useRef<boolean>(false);
+
+  // Vérification automatique du code PIN Simkl toutes les 6 secondes dès qu'un code est généré
   useEffect(() => {
     if (!simklPinData?.user_code) return;
     const timer = setInterval(async () => {
+      if (checkingPinRef.current) return;
+      checkingPinRef.current = true;
       try {
         const res = await api.checkSimklPin(
           simklPinData.user_code,
@@ -357,16 +361,21 @@ export const Settings: React.FC = () => {
           alert(res.message);
           await refreshUser();
         }
-      } catch {
-        // Ignorer pendant le polling automatique
+      } catch (err: any) {
+        if (err?.message) {
+          setSimklPinError(err.message);
+        }
+      } finally {
+        checkingPinRef.current = false;
       }
-    }, 5000);
+    }, 6000);
 
     return () => clearInterval(timer);
   }, [simklPinData, simklDeviceCode, userSimklClientId, userSimklClientSecret]);
 
   const handleCheckSimklPin = async () => {
-    if (!simklPinData) return;
+    if (!simklPinData || checkingPinRef.current) return;
+    checkingPinRef.current = true;
     setCheckingPin(true);
     setSimklPinError(null);
     try {
@@ -387,6 +396,7 @@ export const Settings: React.FC = () => {
     } catch (err: any) {
       setSimklPinError(err.message || 'Erreur vérification code');
     } finally {
+      checkingPinRef.current = false;
       setCheckingPin(false);
     }
   };
