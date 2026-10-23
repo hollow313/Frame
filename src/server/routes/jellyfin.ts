@@ -145,7 +145,7 @@ router.post('/sync', async (req: AuthenticatedRequest, res: Response) => {
     const result = await JellyfinService.syncWatchedFromJellyfin(req.user!.id);
     res.json({
       success: true,
-      message: `Synchronisation Jellyfin terminée : ${result.importedMovies} films et ${result.importedShows} séries importés.`,
+      message: `Synchronisation Jellyfin terminée : ${result.importedMovies} films, ${result.importedShows} séries et ${result.importedEpisodes} épisodes vus importés.`,
       result,
     });
   } catch (err: any) {

@@ -308,8 +308,10 @@ router.delete('/watched/episode/:tmdbId/:seasonNumber/:episodeNumber', (req: Aut
 
 /**
  * 1D. Obtenir la liste des épisodes vus d'une série pour l'utilisateur courant (U-01)
+ * Si la série entière est marquée comme vue (season_number=0, episode_number=0) via Simkl, Jellyfin, Sonarr ou manuellement,
+ * mais qu'aucun épisode individuel n'est encore enregistré, on rétro-remplit automatiquement tous les épisodes déjà diffusés.
  */
-router.get('/watched/episodes/:tmdbId', (req: AuthenticatedRequest, res: Response) => {
+router.get('/watched/episodes/:tmdbId', async (req: AuthenticatedRequest, res: Response) => {
   try {
     const tmdbId = validateTmdbId(req.params.tmdbId);
     if (!tmdbId) {
@@ -317,7 +319,7 @@ router.get('/watched/episodes/:tmdbId', (req: AuthenticatedRequest, res: Respons
       return;
     }
 
-    const rows = db
+    let rows = db
       .prepare(`
         SELECT season_number, episode_number, watched_at, rating, runtime
         FROM watched_items
@@ -331,6 +333,97 @@ router.get('/watched/episodes/:tmdbId', (req: AuthenticatedRequest, res: Respons
       rating: number | null;
       runtime: number;
     }>;
+
+    // Si aucun épisode individuel n'est enregistré mais que la série est marquée comme vue globalement (0,0),
+    // on récupère les saisons de TMDB et on coche automatiquement tous les épisodes déjà sortis.
+    if (rows.length === 0) {
+      const seriesRow = db
+        .prepare(`
+          SELECT title, poster_path, backdrop_path, release_date, rating, watched_at, genres, runtime
+          FROM watched_items
+          WHERE user_id = ? AND tmdb_id = ? AND media_type = 'tv' AND season_number = 0 AND episode_number = 0
+          LIMIT 1
+        `)
+        .get(req.user!.id, tmdbId) as
+        | {
+            title: string | null;
+            poster_path: string | null;
+            backdrop_path: string | null;
+            release_date: string | null;
+            rating: number | null;
+            watched_at: string;
+            genres: string | null;
+            runtime: number;
+          }
+        | undefined;
+
+      if (seriesRow && TMDBService.isConfigured()) {
+        try {
+          const todayStr = new Date().toISOString().split('T')[0];
+          const details: any = await TMDBService.getDetails('tv', tmdbId);
+          const seasons = Array.isArray(details?.seasons)
+            ? details.seasons.filter((s: any) => s.season_number > 0)
+            : [];
+
+          const insertEpStmt = db.prepare(`
+            INSERT INTO watched_items (
+              user_id, tmdb_id, media_type, title, poster_path, backdrop_path,
+              release_date, rating, watched_at, genres, runtime, season_number, episode_number
+            )
+            VALUES (?, ?, 'tv', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(user_id, tmdb_id, media_type, season_number, episode_number) DO NOTHING
+          `);
+
+          let backfilledCount = 0;
+          for (const s of seasons) {
+            if (s.air_date && s.air_date > todayStr) continue;
+            try {
+              const seasonDetails: any = await TMDBService.getTvSeasonDetails(tmdbId, s.season_number);
+              const eps = Array.isArray(seasonDetails?.episodes) ? seasonDetails.episodes : [];
+              for (const ep of eps) {
+                if (ep.air_date && ep.air_date > todayStr) continue;
+                const epRuntime = Number(ep.runtime) || Number(details?.episode_run_time?.[0]) || 24;
+                insertEpStmt.run(
+                  req.user!.id,
+                  tmdbId,
+                  seriesRow.title || details?.name || null,
+                  seriesRow.poster_path || details?.poster_path || null,
+                  seriesRow.backdrop_path || details?.backdrop_path || null,
+                  seriesRow.release_date || details?.first_air_date || null,
+                  seriesRow.rating,
+                  seriesRow.watched_at || new Date().toISOString(),
+                  seriesRow.genres,
+                  epRuntime,
+                  s.season_number,
+                  ep.episode_number
+                );
+                backfilledCount++;
+              }
+            } catch {
+              // Ignorer l'erreur d'une saison spécifique
+            }
+          }
+
+          if (backfilledCount > 0) {
+            // Mettre runtime=0 sur la ligne série globale (0,0) pour ne pas compter deux fois le temps de visionnage
+            db.prepare(
+              `UPDATE watched_items SET runtime = 0 WHERE user_id = ? AND tmdb_id = ? AND media_type = 'tv' AND season_number = 0 AND episode_number = 0`
+            ).run(req.user!.id, tmdbId);
+
+            rows = db
+              .prepare(`
+                SELECT season_number, episode_number, watched_at, rating, runtime
+                FROM watched_items
+                WHERE user_id = ? AND tmdb_id = ? AND media_type = 'tv' AND (season_number > 0 OR episode_number > 0)
+                ORDER BY season_number ASC, episode_number ASC
+              `)
+              .all(req.user!.id, tmdbId) as typeof rows;
+          }
+        } catch {
+          // Ne pas bloquer la réponse si TMDB échoue
+        }
+      }
+    }
 
     res.json({
       tmdbId,

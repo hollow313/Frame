@@ -657,9 +657,9 @@ export class SimklService {
 
         if (status === 'completed' || status === 'watching' || watchedEpsCount > 0) {
           const watchedAt = normalizeIsoDate(s.last_watched_at || s.last_watched);
-          const epDates = extractWatchedEpisodeDates(s.seasons);
+          let insertedEpCount = 0;
 
-          if (epDates.length > 0 && Array.isArray(s.seasons)) {
+          if (Array.isArray(s.seasons)) {
             for (const seasonObj of s.seasons) {
               const sNum = Number(seasonObj.number) || 1;
               if (Array.isArray(seasonObj.episodes)) {
@@ -679,12 +679,13 @@ export class SimklService {
                     sNum,
                     eNum
                   );
+                  insertedEpCount++;
                 }
               }
             }
           }
 
-          const totalShowRuntime = epDates.length > 0 ? 0 : Math.max(1, watchedEpsCount) * epRuntime;
+          const totalShowRuntime = insertedEpCount > 0 ? 0 : Math.max(1, watchedEpsCount) * epRuntime;
           insertWatchedStmt.run(
             userId,
             tmdbId,
@@ -765,35 +766,74 @@ export class SimklService {
 
       if (status === 'completed' || status === 'watching' || watchedEpsCount > 0) {
         const watchedAt = normalizeIsoDate(a.last_watched_at || a.last_watched);
-        const epDates = extractWatchedEpisodeDates(a.seasons);
+        let insertedAnimeEpCount = 0;
 
-        if (!isMovie && !isMangaItem && epDates.length > 0 && Array.isArray(a.seasons)) {
-          for (const seasonObj of a.seasons) {
-            const sNum = Number(seasonObj.number) || 1;
-            if (Array.isArray(seasonObj.episodes)) {
-              for (const epObj of seasonObj.episodes) {
-                const eNum = Number(epObj.number) || 1;
-                const epDate = normalizeIsoDate(epObj.watched_at || watchedAt);
-                insertWatchedStmt.run(
-                  userId,
-                  tmdbId,
-                  mediaType,
-                  title,
-                  year,
-                  a.user_rating || null,
-                  epDate,
-                  genreJson,
-                  epRuntime,
-                  sNum,
-                  eNum
-                );
+        if (!isMovie && !isMangaItem) {
+          if (Array.isArray(a.seasons) && a.seasons.length > 0) {
+            for (const seasonObj of a.seasons) {
+              const sNum = Number(seasonObj.number) || 1;
+              if (Array.isArray(seasonObj.episodes)) {
+                for (const epObj of seasonObj.episodes) {
+                  const eNum = Number(epObj.number) || 1;
+                  const epDate = normalizeIsoDate(epObj.watched_at || watchedAt);
+                  insertWatchedStmt.run(
+                    userId,
+                    tmdbId,
+                    mediaType,
+                    title,
+                    year,
+                    a.user_rating || null,
+                    epDate,
+                    genreJson,
+                    epRuntime,
+                    sNum,
+                    eNum
+                  );
+                  insertedAnimeEpCount++;
+                }
               }
+            }
+          } else if (Array.isArray(a.episodes) && a.episodes.length > 0) {
+            for (const epObj of a.episodes) {
+              const eNum = Number(epObj.number || epObj) || 1;
+              const epDate = normalizeIsoDate(epObj?.watched_at || watchedAt);
+              insertWatchedStmt.run(
+                userId,
+                tmdbId,
+                mediaType,
+                title,
+                year,
+                a.user_rating || null,
+                epDate,
+                genreJson,
+                epRuntime,
+                1,
+                eNum
+              );
+              insertedAnimeEpCount++;
+            }
+          } else if (watchedEpsCount > 0 && watchedEpsCount <= 200) {
+            for (let eNum = 1; eNum <= watchedEpsCount; eNum++) {
+              insertWatchedStmt.run(
+                userId,
+                tmdbId,
+                mediaType,
+                title,
+                year,
+                a.user_rating || null,
+                watchedAt,
+                genreJson,
+                epRuntime,
+                1,
+                eNum
+              );
+              insertedAnimeEpCount++;
             }
           }
         }
 
         const totalAnimeRuntime =
-          !isMovie && !isMangaItem && epDates.length > 0
+          !isMovie && !isMangaItem && insertedAnimeEpCount > 0
             ? 0
             : isMovie
             ? epRuntime

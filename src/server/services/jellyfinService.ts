@@ -529,10 +529,12 @@ export class JellyfinService {
   }
 
   /**
-   * Synchroniser les films et séries marqués comme "Lus" (Played) dans Jellyfin vers Frame
+   * Synchroniser les films, séries et épisodes marqués comme "Lus" (Played) dans Jellyfin vers Frame
    * avec enrichissement des affiches, durées et dates via Jellyfin + TMDB
    */
-  public static async syncWatchedFromJellyfin(frameUserId: number): Promise<{ importedMovies: number; importedShows: number }> {
+  public static async syncWatchedFromJellyfin(
+    frameUserId: number
+  ): Promise<{ importedMovies: number; importedShows: number; importedEpisodes: number }> {
     const userRow = db
       .prepare('SELECT jellyfin_user_id, jellyfin_token, jellyfin_server_url FROM users WHERE id = ?')
       .get(frameUserId) as any;
@@ -547,6 +549,7 @@ export class JellyfinService {
 
     let importedMovies = 0;
     let importedShows = 0;
+    let importedEpisodes = 0;
 
     const headers = {
       ...this.getAuthHeaders(userRow.jellyfin_token),
@@ -558,7 +561,7 @@ export class JellyfinService {
         user_id, tmdb_id, media_type, title, poster_path, backdrop_path,
         release_date, runtime, overview, watched_at, season_number, episode_number
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(user_id, tmdb_id, media_type, season_number, episode_number) DO UPDATE SET
         title = COALESCE(watched_items.title, excluded.title),
         poster_path = COALESCE(watched_items.poster_path, excluded.poster_path),
@@ -607,7 +610,9 @@ export class JellyfinService {
             releaseDate,
             runtime,
             item.Overview || null,
-            watchedAt
+            watchedAt,
+            0,
+            0
           );
           toEnrich.push({ tmdbId, mediaType: 'movie' });
           importedMovies++;
@@ -615,24 +620,40 @@ export class JellyfinService {
       }
     }
 
-    // 2. Récupérer les séries vues
-    const showsRes = await fetch(
-      `${url}/Users/${userRow.jellyfin_user_id}/Items?IncludeItemTypes=Series&Recursive=true&Filters=IsPlayed&Fields=ProviderIds,ProductionYear,PremiereDate,RunTimeTicks,Overview`,
+    // 2. Récupérer toutes les séries Jellyfin pour indexer SeriesId -> TmdbId et importer les séries entièrement vues
+    const seriesByJellyfinId = new Map<
+      string,
+      { tmdbId: number; name: string; releaseDate: string | null; overview: string | null }
+    >();
+    const countedShows = new Set<number>();
+
+    const allShowsRes = await fetch(
+      `${url}/Users/${userRow.jellyfin_user_id}/Items?IncludeItemTypes=Series&Recursive=true&Fields=ProviderIds,ProductionYear,PremiereDate,RunTimeTicks,Overview`,
       { headers, redirect: 'manual', signal: AbortSignal.timeout(15000) }
     );
 
-    if (showsRes.ok) {
-      const showsData = await showsRes.json();
+    if (allShowsRes.ok) {
+      const showsData = await allShowsRes.json();
       for (const item of showsData.Items || []) {
         const pids = item.ProviderIds || {};
         const rawTmdb = pids.Tmdb || pids.tmdb || pids.TMDB;
         const tmdbId = rawTmdb ? parseInt(String(rawTmdb), 10) : null;
-        if (tmdbId) {
-          const releaseDate = item.PremiereDate
-            ? String(item.PremiereDate).slice(0, 10)
-            : item.ProductionYear
-            ? `${item.ProductionYear}-01-01`
-            : null;
+        if (!tmdbId) continue;
+
+        const releaseDate = item.PremiereDate
+          ? String(item.PremiereDate).slice(0, 10)
+          : item.ProductionYear
+          ? `${item.ProductionYear}-01-01`
+          : null;
+
+        seriesByJellyfinId.set(item.Id, {
+          tmdbId,
+          name: item.Name || 'Série',
+          releaseDate,
+          overview: item.Overview || null,
+        });
+
+        if (item.UserData?.Played || (item.UserData?.PlayedPercentage && item.UserData.PlayedPercentage > 0)) {
           const watchedAt = item.UserData?.LastPlayedDate
             ? new Date(item.UserData.LastPlayedDate).toISOString()
             : nowIso;
@@ -645,17 +666,84 @@ export class JellyfinService {
             null,
             null,
             releaseDate,
-            450,
+            item.UserData?.Played ? 450 : 0,
             item.Overview || null,
-            watchedAt
+            watchedAt,
+            0,
+            0
           );
           toEnrich.push({ tmdbId, mediaType: 'tv' });
+          if (!countedShows.has(tmdbId)) {
+            countedShows.add(tmdbId);
+            importedShows++;
+          }
+        }
+      }
+    }
+
+    // 3. Récupérer tous les épisodes marqués comme "Lus" (IsPlayed) dans Jellyfin pour cocher chaque épisode vu
+    const episodesRes = await fetch(
+      `${url}/Users/${userRow.jellyfin_user_id}/Items?IncludeItemTypes=Episode&Recursive=true&Filters=IsPlayed&Fields=SeriesId,ParentIndexNumber,IndexNumber,RunTimeTicks`,
+      { headers, redirect: 'manual', signal: AbortSignal.timeout(20000) }
+    );
+
+    if (episodesRes.ok) {
+      const episodesData = await episodesRes.json();
+      for (const ep of episodesData.Items || []) {
+        const seriesInfo = ep.SeriesId ? seriesByJellyfinId.get(ep.SeriesId) : undefined;
+        if (!seriesInfo) continue;
+
+        const sNum = Number(ep.ParentIndexNumber) >= 1 ? Number(ep.ParentIndexNumber) : 1;
+        const eNum = Number(ep.IndexNumber) >= 1 ? Number(ep.IndexNumber) : 1;
+        const epRuntime = ep.RunTimeTicks
+          ? Math.max(1, Math.round(Number(ep.RunTimeTicks) / 600000000))
+          : 42;
+        const watchedAt = ep.UserData?.LastPlayedDate
+          ? new Date(ep.UserData.LastPlayedDate).toISOString()
+          : nowIso;
+
+        // Insérer l'épisode individuel (season_number, episode_number)
+        insertStmt.run(
+          frameUserId,
+          seriesInfo.tmdbId,
+          'tv',
+          seriesInfo.name,
+          null,
+          null,
+          seriesInfo.releaseDate,
+          epRuntime,
+          seriesInfo.overview,
+          watchedAt,
+          sNum,
+          eNum
+        );
+        importedEpisodes++;
+
+        // Garantir la présence de la ligne parente série (0, 0)
+        insertStmt.run(
+          frameUserId,
+          seriesInfo.tmdbId,
+          'tv',
+          seriesInfo.name,
+          null,
+          null,
+          seriesInfo.releaseDate,
+          0,
+          seriesInfo.overview,
+          watchedAt,
+          0,
+          0
+        );
+
+        if (!countedShows.has(seriesInfo.tmdbId)) {
+          countedShows.add(seriesInfo.tmdbId);
+          toEnrich.push({ tmdbId: seriesInfo.tmdbId, mediaType: 'tv' });
           importedShows++;
         }
       }
     }
 
-    // 3. Enrichir les affiches (poster_path, backdrop_path, genres) depuis TMDB si configuré
+    // 4. Enrichir les affiches (poster_path, backdrop_path, genres) depuis TMDB si configuré
     try {
       if (Boolean(getSetting('TMDB_API_KEY')) && toEnrich.length > 0) {
         const updateMetaStmt = db.prepare(`
@@ -701,6 +789,6 @@ export class JellyfinService {
       // Ne jamais faire échouer la synchronisation Jellyfin si l'enrichissement TMDB rencontre un problème
     }
 
-    return { importedMovies, importedShows };
+    return { importedMovies, importedShows, importedEpisodes };
   }
 }

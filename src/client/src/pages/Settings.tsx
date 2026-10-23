@@ -1535,7 +1535,7 @@ export const Settings: React.FC = () => {
                   </button>
                 </div>
 
-                <div className="flex items-center gap-3 pt-2">
+                <div className="flex flex-wrap items-center gap-3 pt-2">
                   <button
                     onClick={handleSyncJellyfin}
                     disabled={syncingJellyfin}
@@ -1544,6 +1544,9 @@ export const Settings: React.FC = () => {
                     <RefreshCw className={`w-3.5 h-3.5 ${syncingJellyfin ? 'animate-spin' : ''}`} />
                     <span>{syncingJellyfin ? 'Synchronisation Jellyfin...' : 'Synchroniser mes vues Jellyfin'}</span>
                   </button>
+                  <span className="text-[11px] text-slate-400">
+                    Synchronisation automatique active toutes les 6 heures (films, séries et épisodes vus)
+                  </span>
                 </div>
 
                 {jellyfinSyncMessage && (
