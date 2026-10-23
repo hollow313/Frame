@@ -2,23 +2,21 @@ import dns from 'dns/promises';
 import net from 'net';
 import { getSetting, SettingKey } from './settingsService.js';
 
-const BLOCKED = new net.BlockList();
-BLOCKED.addSubnet('127.0.0.0', 8);
-BLOCKED.addSubnet('10.0.0.0', 8);
-BLOCKED.addSubnet('172.16.0.0', 12);
-BLOCKED.addSubnet('192.168.0.0', 16);
-BLOCKED.addSubnet('169.254.0.0', 16); // Link-local & Cloud metadata (169.254.169.254)
-BLOCKED.addSubnet('0.0.0.0', 8);
-BLOCKED.addAddress('::1', 'ipv6');
-BLOCKED.addSubnet('fc00::', 7, 'ipv6');
-BLOCKED.addSubnet('fe80::', 10, 'ipv6');
-
-// Always block cloud metadata & loopback unless explicitly listed in INTERNAL_HOSTS_ALLOWLIST
+// Always block cloud metadata (169.254.169.254), loopback (127.0.0.0/8, ::1), and 0.0.0.0/8
+// unless explicitly listed in INTERNAL_HOSTS_ALLOWLIST
 const STRICT_BLOCKED = new net.BlockList();
 STRICT_BLOCKED.addSubnet('127.0.0.0', 8);
 STRICT_BLOCKED.addSubnet('169.254.0.0', 16);
 STRICT_BLOCKED.addSubnet('0.0.0.0', 8);
 STRICT_BLOCKED.addAddress('::1', 'ipv6');
+STRICT_BLOCKED.addSubnet('fe80::', 10, 'ipv6');
+
+// Optional strict RFC1918 blocking if BLOCK_LAN_IPS=true
+const LAN_BLOCKED = new net.BlockList();
+LAN_BLOCKED.addSubnet('10.0.0.0', 8);
+LAN_BLOCKED.addSubnet('172.16.0.0', 12);
+LAN_BLOCKED.addSubnet('192.168.0.0', 16);
+LAN_BLOCKED.addSubnet('fc00::', 7, 'ipv6');
 
 function getConfiguredTrustedHosts(): Set<string> {
   const hosts = new Set<string>();
@@ -68,6 +66,7 @@ export async function assertSafeTarget(rawUrl: string): Promise<URL> {
 
   const trustedAdminHosts = getConfiguredTrustedHosts();
   const isAdminConfiguredHost = trustedAdminHosts.has(hostname);
+  const blockLan = process.env.BLOCK_LAN_IPS === 'true';
 
   // If the hostname is already an IP literal, check directly without DNS lookup
   const ipVersion = net.isIP(hostname);
@@ -76,7 +75,7 @@ export async function assertSafeTarget(rawUrl: string): Promise<URL> {
     if (STRICT_BLOCKED.check(hostname, family)) {
       throw new Error(`Hôte interne refusé (${hostname}). Ajoutez-le à INTERNAL_HOSTS_ALLOWLIST si légitime.`);
     }
-    if (!isAdminConfiguredHost && BLOCKED.check(hostname, family)) {
+    if (blockLan && !isAdminConfiguredHost && LAN_BLOCKED.check(hostname, family)) {
       throw new Error(`Hôte interne refusé (${hostname}). Ajoutez-le à INTERNAL_HOSTS_ALLOWLIST si légitime.`);
     }
     return u;
@@ -94,7 +93,7 @@ export async function assertSafeTarget(rawUrl: string): Promise<URL> {
     if (STRICT_BLOCKED.check(address, fam)) {
       throw new Error(`Hôte interne refusé (${address}). Ajoutez-le à INTERNAL_HOSTS_ALLOWLIST si légitime.`);
     }
-    if (!isAdminConfiguredHost && BLOCKED.check(address, fam)) {
+    if (blockLan && !isAdminConfiguredHost && LAN_BLOCKED.check(address, fam)) {
       throw new Error(`Hôte interne refusé (${address}). Ajoutez-le à INTERNAL_HOSTS_ALLOWLIST si légitime.`);
     }
   }

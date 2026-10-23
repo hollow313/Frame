@@ -10,13 +10,19 @@ import { logger } from '../utils/logger.js';
 
 const router = Router();
 
-const COOKIE_OPTS = {
-  httpOnly: true,
-  sameSite: 'lax' as const,
-  secure: process.env.COOKIE_SECURE !== 'false',
-  path: '/',
-  maxAge: 7 * 24 * 60 * 60 * 1000,
-};
+function getCookieOpts(req: Request) {
+  const isHttps =
+    req.secure ||
+    req.headers['x-forwarded-proto'] === 'https' ||
+    process.env.COOKIE_SECURE === 'true';
+  return {
+    httpOnly: true,
+    sameSite: 'lax' as const,
+    secure: isHttps,
+    path: '/',
+    maxAge: 7 * 24 * 60 * 60 * 1000,
+  };
+}
 
 // Rate limiters contre le brute-force (F-04)
 const loginLimiter = rateLimit({
@@ -81,7 +87,7 @@ router.post('/sso', (req: AuthenticatedRequest, res: Response) => {
     }
 
     const token = generateToken(req.user);
-    res.cookie('frame_token', token, COOKIE_OPTS);
+    res.cookie('frame_token', token, getCookieOpts(req));
     res.json({
       user: req.user,
       token,
@@ -156,7 +162,7 @@ router.post('/register', registerLimiter, async (req: Request, res: Response) =>
 
     const token = generateToken(newUser);
 
-    res.cookie('frame_token', token, COOKIE_OPTS);
+    res.cookie('frame_token', token, getCookieOpts(req));
 
     res.status(201).json({
       user: newUser,
@@ -297,7 +303,7 @@ router.post('/login', loginLimiter, async (req: Request, res: Response) => {
 
     const token = generateToken(authUser);
 
-    res.cookie('frame_token', token, COOKIE_OPTS);
+    res.cookie('frame_token', token, getCookieOpts(req));
 
     res.json({
       user: authUser,

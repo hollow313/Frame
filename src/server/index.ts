@@ -36,35 +36,57 @@ app.set('trust proxy', 1);
 app.disable('x-powered-by');
 
 // En-têtes de sécurité HTTP via Helmet (F-11)
+// Note : upgradeInsecureRequests et HSTS sont désactivés par défaut pour permettre l'accès HTTP direct (ex: port 30018 sur LAN/NAS)
 app.use(
   helmet({
     crossOriginEmbedderPolicy: false,
+    crossOriginOpenerPolicy: false,
+    crossOriginResourcePolicy: false,
+    originAgentCluster: false,
+    strictTransportSecurity: process.env.COOKIE_SECURE === 'true',
     contentSecurityPolicy: {
+      useDefaults: false,
       directives: {
         defaultSrc: ["'self'"],
-        imgSrc: ["'self'", 'data:', 'blob:', 'https://image.tmdb.org', 'https://simkl.in', '*'],
+        baseUri: ["'self'"],
+        objectSrc: ["'none'"],
+        frameAncestors: ["'self'"],
+        imgSrc: ["'self'", 'data:', 'blob:', 'https:', 'http:'],
         scriptSrc: ["'self'", "'unsafe-inline'"],
         styleSrc: ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com'],
         fontSrc: ["'self'", 'https://fonts.gstatic.com', 'data:'],
-        frameSrc: ["'self'", 'https://www.youtube.com'],
-        connectSrc: ["'self'", 'https://image.tmdb.org'],
+        frameSrc: ["'self'", 'https://www.youtube.com', 'https://www.youtube-nocookie.com'],
+        connectSrc: ["'self'", 'https:', 'http:'],
       },
     },
   })
 );
 
-// Configuration CORS restreinte aux origines autorisées (F-06)
+// Configuration CORS : autorise toujours la même origine (Host courant pour <script crossorigin>) et les origines listées dans CORS_ORIGINS (F-06)
 const allowedOrigins = (process.env.CORS_ORIGINS || '')
   .split(',')
   .map((s) => s.trim())
   .filter(Boolean);
 
-app.use(
+app.use((req, res, next) => {
   cors({
-    origin: allowedOrigins.length > 0 ? allowedOrigins : false,
+    origin: (origin, callback) => {
+      if (!origin) return callback(null, true);
+      if (allowedOrigins.includes(origin)) return callback(null, true);
+      try {
+        const originHost = new URL(origin).host;
+        const reqHost = req.headers['x-forwarded-host'] || req.headers.host;
+        if (reqHost && originHost === reqHost) {
+          return callback(null, true);
+        }
+      } catch {
+        // Ignore
+      }
+      return callback(null, false);
+    },
     credentials: true,
-  })
-);
+  })(req, res, next);
+});
 
 app.use(express.json({ limit: '2mb' }));
 app.use(cookieParser());
