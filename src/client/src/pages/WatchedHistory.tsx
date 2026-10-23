@@ -72,7 +72,7 @@ export const WatchedHistory: React.FC<WatchedHistoryProps> = ({
 
   // List states
   const [items, setItems] = useState<WatchedItem[]>([]);
-  const [filterType, setFilterType] = useState<'all' | 'movie' | 'tv' | 'anime'>('all');
+  const [filterType, setFilterType] = useState<'all' | 'movie' | 'tv' | 'anime' | 'manga'>('all');
   const [sortBy, setSortBy] = useState<'watched_at' | 'rating'>('watched_at');
   const [loadingList, setLoadingList] = useState<boolean>(true);
 
@@ -1541,7 +1541,15 @@ export const WatchedHistory: React.FC<WatchedHistoryProps> = ({
                   filterType === 'anime' ? 'bg-amber-500 text-dark-950 font-bold shadow' : 'text-slate-400 hover:text-white'
                 }`}
               >
-                Mangas & Animés
+                Animés
+              </button>
+              <button
+                onClick={() => setFilterType('manga')}
+                className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition-all ${
+                  filterType === 'manga' ? 'bg-pink-500 text-white font-bold shadow' : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                Mangas
               </button>
             </div>
 
@@ -1644,14 +1652,24 @@ export const WatchedHistory: React.FC<WatchedHistoryProps> = ({
                           </button>
                         </div>
 
-                        <div className="flex items-center gap-2 text-xs text-slate-400 mt-0.5">
+                        <div className="flex flex-wrap items-center gap-2 text-xs text-slate-400 mt-0.5">
                           <span className={`uppercase text-[10px] font-bold px-1.5 py-0.5 rounded ${
-                            isAnime ? 'bg-amber-500/20 text-amber-300' : 'bg-dark-800 text-slate-300'
+                            item.media_type === 'manga'
+                              ? 'bg-pink-500/20 text-pink-300'
+                              : isAnime
+                              ? 'bg-amber-500/20 text-amber-300'
+                              : 'bg-dark-800 text-slate-300'
                           }`}>
-                            {isAnime ? 'Animé' : item.media_type === 'movie' ? 'Film' : 'Série'}
+                            {item.media_type === 'manga' ? 'Manga' : isAnime ? 'Animé' : item.media_type === 'movie' ? 'Film' : 'Série'}
                           </span>
                           {item.release_date && (
                             <span>{new Date(item.release_date).getFullYear()}</span>
+                          )}
+                          {(item.watchedEpisodesCount ?? 0) > 0 && (
+                            <span className="text-[11px] font-semibold text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded">
+                              {item.watchedEpisodesCount} ép. vus
+                              {item.nextEpisode ? ` • Prochain : S${item.nextEpisode.seasonNumber}E${item.nextEpisode.episodeNumber}` : ''}
+                            </span>
                           )}
                         </div>
 

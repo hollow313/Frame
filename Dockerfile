@@ -42,5 +42,9 @@ VOLUME ["/app/data", "/app/config"]
 
 EXPOSE 30018
 
+# Healthcheck Docker natif (B-10)
+HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
+  CMD wget -qO- http://127.0.0.1:30018/api/health || exit 1
+
 ENTRYPOINT ["./docker-entrypoint.sh"]
 CMD ["node", "dist/server/index.js"]

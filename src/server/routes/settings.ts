@@ -1,31 +1,73 @@
 import { Router, Response } from 'express';
-import { getAllSettingsMasked, setSetting, SettingKey } from '../services/settingsService.js';
+import { getAllSettingsMasked, setSetting, SettingKey, getSetting } from '../services/settingsService.js';
 import { authenticateToken, requireAdmin, AuthenticatedRequest } from '../middleware/auth.js';
 import { SeerService } from '../services/seerService.js';
-import { ArrService } from '../services/sonarrService.js';
+import { SonarrService } from '../services/sonarrService.js';
 import { TMDBService } from '../services/tmdbService.js';
-import { LDAPService } from '../services/ldapService.js';
+import { LdapService } from '../services/ldapService.js';
 import { JellyfinService } from '../services/jellyfinService.js';
+import { serverError } from '../utils/httpError.js';
+import db from '../db/index.js';
 
 const router = Router();
-router.use(authenticateToken);
 
-// Récupérer la configuration
-router.get('/', (_req, res) => {
+/**
+ * Obtenir la configuration actuelle (masquée pour les clés secrètes) - Réservé aux administrateurs (F-09)
+ */
+router.get('/', authenticateToken, requireAdmin, (_req: AuthenticatedRequest, res: Response) => {
   try {
     const settings = getAllSettingsMasked();
     res.json(settings);
   } catch (err: any) {
-    res.status(500).json({ error: err.message });
+    serverError(res, err, 'SettingsGet');
   }
 });
 
-// Enregistrer les paramètres (admin uniquement)
-router.put('/', requireAdmin, (req: AuthenticatedRequest, res: Response): void => {
+/**
+ * Diagnostic système complet (réservé aux administrateurs - B-06)
+ */
+router.get('/diagnostics', authenticateToken, requireAdmin, (_req: AuthenticatedRequest, res: Response) => {
   try {
-    const updates: Record<string, string> = req.body;
+    const usersCount = (db.prepare('SELECT COUNT(*) as c FROM users').get() as any)?.c || 0;
+    const watchedCount = (db.prepare('SELECT COUNT(*) as c FROM watched_items').get() as any)?.c || 0;
+    const watchlistCount = (db.prepare('SELECT COUNT(*) as c FROM watchlist').get() as any)?.c || 0;
+    const cacheCount = (db.prepare('SELECT COUNT(*) as c FROM tmdb_cache').get() as any)?.c || 0;
+    const featuresCount = (db.prepare('SELECT COUNT(*) as c FROM media_features').get() as any)?.c || 0;
 
-    const allowedKeys: SettingKey[] = [
+    res.json({
+      status: 'ok',
+      uptimeSeconds: Math.round(process.uptime()),
+      nodeVersion: process.version,
+      memoryUsageMB: Math.round(process.memoryUsage().rss / 1024 / 1024),
+      database: {
+        usersCount,
+        watchedCount,
+        watchlistCount,
+        cacheCount,
+        featuresCount,
+      },
+      integrations: {
+        tmdbConfigured: Boolean(getSetting('TMDB_API_KEY')),
+        seerConfigured: SeerService.isConfigured(),
+        sonarrConfigured: SonarrService.isSonarrConfigured(),
+        radarrConfigured: SonarrService.isRadarrConfigured(),
+        jellyfinConfigured: JellyfinService.isConfigured(),
+        ldapEnabled: LdapService.isEnabled(),
+        ssoEnabled: getSetting('SSO_ENABLED') === 'true',
+      },
+    });
+  } catch (err: any) {
+    serverError(res, err, 'SettingsDiagnostics');
+  }
+});
+
+/**
+ * Mettre à jour les paramètres du serveur (réservé aux administrateurs)
+ */
+router.put('/', authenticateToken, requireAdmin, (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const updates = req.body as Record<string, string>;
+    const validKeys: SettingKey[] = [
       'TMDB_API_KEY',
       'SEER_URL',
       'SEER_API_KEY',
@@ -36,6 +78,8 @@ router.put('/', requireAdmin, (req: AuthenticatedRequest, res: Response): void =
       'RADARR_API_KEY',
       'SIMKL_CLIENT_ID',
       'SIMKL_CLIENT_SECRET',
+      'SIMKL_ACCESS_TOKEN',
+      'JELLYFIN_URL',
       'DEFAULT_LANGUAGE',
       'ALLOW_REGISTRATION',
       'LDAP_ENABLED',
@@ -46,72 +90,84 @@ router.put('/', requireAdmin, (req: AuthenticatedRequest, res: Response): void =
       'LDAP_SEARCH_FILTER',
       'SSO_ENABLED',
       'SSO_HEADER',
-      'JELLYFIN_URL',
-      'JELLYFIN_API_KEY',
+      'SSO_TRUSTED_PROXIES',
+      'INTERNAL_HOSTS_ALLOWLIST',
     ];
 
-    for (const [key, value] of Object.entries(updates)) {
-      if (allowedKeys.includes(key as SettingKey)) {
-        if (value !== undefined && !value.includes('••••')) {
-          setSetting(key as SettingKey, String(value).trim());
+    for (const key of validKeys) {
+      if (updates[key] !== undefined) {
+        // Ignorer si c'est une valeur masquée inchangée (contenant ••••) ou vide pour une clé secrète déjà configurée
+        if (typeof updates[key] === 'string' && !updates[key].includes('••••')) {
+          setSetting(key, updates[key]);
         }
       }
     }
 
-    res.json({ success: true, message: 'Paramètres enregistrés avec succès !' });
+    res.json({
+      success: true,
+      message: 'Paramètres mis à jour et sauvegardés avec succès.',
+      settings: getAllSettingsMasked(),
+    });
   } catch (err: any) {
-    res.status(500).json({ error: err.message });
+    serverError(res, err, 'SettingsPut');
   }
 });
 
-// Tester une intégration
-router.post('/test', requireAdmin, async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+/**
+ * Tester la connexion aux services externes (TMDB, Seer, Sonarr, Radarr, LDAP, Jellyfin)
+ */
+router.post('/test', authenticateToken, requireAdmin, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const { service } = req.body;
 
     if (service === 'tmdb') {
-      try {
-        const test = await TMDBService.getTrending('day', 1);
-        res.json({ success: true, message: `TMDB connecté avec succès (${test.results.length} tendances chargées)` });
-      } catch (e: any) {
-        res.json({ success: false, message: e.message || 'Erreur TMDB' });
-      }
+      await TMDBService.getTrending('day', 1);
+      res.json({ success: true, message: 'Connexion TMDB opérationnelle (fr-FR) !' });
       return;
     }
 
     if (service === 'seer') {
-      const test = await SeerService.testConnection();
-      res.json(test);
+      const status = await SeerService.getStatus();
+      res.json({
+        success: status.connected,
+        message: status.message,
+      });
       return;
     }
 
     if (service === 'sonarr') {
-      const test = await ArrService.testSonarr();
-      res.json(test);
+      const status = await SonarrService.getSonarrStatus();
+      res.json({
+        success: status.connected,
+        message: status.connected ? `Sonarr connecté (v${status.version})` : status.error,
+      });
       return;
     }
 
     if (service === 'radarr') {
-      const test = await ArrService.testRadarr();
-      res.json(test);
+      const status = await SonarrService.getRadarrStatus();
+      res.json({
+        success: status.connected,
+        message: status.connected ? `Radarr connecté (v${status.version})` : status.error,
+      });
       return;
     }
 
     if (service === 'ldap') {
-      const test = await LDAPService.testConnection();
-      res.json(test);
+      const status = await LdapService.testConnection();
+      res.json(status);
       return;
     }
 
     if (service === 'jellyfin') {
-      const test = await JellyfinService.testServer();
-      res.json(test);
+      const status = await JellyfinService.testServer();
+      res.json(status);
       return;
     }
 
-    res.status(400).json({ error: 'Service inconnu' });
+    res.status(400).json({ error: 'Service inconnu.' });
   } catch (err: any) {
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ success: false, message: err?.message || 'Erreur lors du test du service.' });
   }
 });
 

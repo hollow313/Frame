@@ -1,345 +1,352 @@
 import { getSetting } from './settingsService.js';
+import { assertSafeTarget } from './urlGuard.js';
 import db from '../db/index.js';
+import { logger } from '../utils/logger.js';
 
-export interface JellyfinSession {
+export interface JellyfinPlayingItem {
   id: string;
-  userName: string;
-  nowPlayingItem?: {
-    name: string;
-    type: string;
-    seriesName?: string;
-    seasonName?: string;
-    playbackPositionTicks?: number;
-    runTimeTicks?: number;
-    percentPlayed?: number;
-    tmdbId?: number;
-  };
+  title: string;
+  seriesName?: string;
+  type: 'Movie' | 'Episode';
+  seasonNumber?: number;
+  episodeNumber?: number;
+  positionTicks?: number;
+  runTimeTicks?: number;
+  percentPlayed?: number;
+  isPaused?: boolean;
 }
 
 export class JellyfinService {
-  public static getUrl(): string {
-    return (getSetting('JELLYFIN_URL') || '').replace(/\/$/, '');
+  public static getServerUrl(): string {
+    return getSetting('JELLYFIN_URL').replace(/\/$/, '').trim();
   }
 
   public static isConfigured(): boolean {
-    return Boolean(this.getUrl());
+    return Boolean(this.getServerUrl());
   }
 
-  public static getAuthHeader(token?: string): string {
-    let header = 'MediaBrowser Client="Frame", Device="Frame Web", DeviceId="frame-media-app", Version="1.0.0"';
-    if (token) {
-      header += `, Token="${token}"`;
-    }
-    return header;
+  private static getAuthHeaders(token?: string): Record<string, string> {
+    const authHeader = `MediaBrowser Client="Frame", Device="FrameServer", DeviceId="frame-server-v1", Version="1.0.0"${
+      token ? `, Token="${token}"` : ''
+    }`;
+    return {
+      'X-Emby-Authorization': authHeader,
+      'Authorization': authHeader,
+      'Content-Type': 'application/json',
+      'Accept': 'application/json',
+    };
   }
 
   /**
-   * Tester la connexion globale au serveur Jellyfin
+   * Tester la connexion à une URL de serveur Jellyfin (protégé contre SSRF - F-02)
    */
-  public static async testServer(overrideUrl?: string): Promise<{ success: boolean; version?: string; message: string }> {
-    const rawUrl = overrideUrl || this.getUrl();
-    if (!rawUrl) return { success: false, message: 'URL Jellyfin non configurée dans les paramètres.' };
-    const url = rawUrl.replace(/\/$/, '');
+  public static async testServer(customUrl?: string): Promise<{ success: boolean; version?: string; serverName?: string; message: string }> {
+    const url = (customUrl || this.getServerUrl()).replace(/\/$/, '').trim();
+    if (!url) {
+      return { success: false, message: 'URL du serveur Jellyfin non configurée.' };
+    }
 
     try {
+      await assertSafeTarget(url);
       const res = await fetch(`${url}/System/Info/Public`, {
-        headers: {
-          'Accept': 'application/json',
-          'Authorization': this.getAuthHeader(),
-          'X-Emby-Authorization': this.getAuthHeader(),
-        },
+        headers: { Accept: 'application/json' },
+        redirect: 'manual',
+        signal: AbortSignal.timeout(8000),
       });
-
       if (!res.ok) {
-        const text = await res.text().catch(() => '');
-        throw new Error(`HTTP ${res.status}: ${text || res.statusText}`);
+        return {
+          success: false,
+          message: `Le serveur a répondu avec le code HTTP ${res.status}. Vérifiez l'URL (ex: http://192.168.1.x:8096).`,
+        };
       }
-
-      const data = await res.json() as { Version?: string; ServerName?: string };
-      return { 
-        success: true, 
-        version: data.Version, 
-        message: `Connecté avec succès à Jellyfin (${data.ServerName || 'Serveur'}, v${data.Version || 'inconnue'}) !` 
+      const data = await res.json();
+      return {
+        success: true,
+        version: data.Version,
+        serverName: data.ServerName,
+        message: `Connecté à Jellyfin "${data.ServerName || 'Serveur'}" (v${data.Version})`,
       };
-    } catch (e: any) {
-      return { 
-        success: false, 
-        message: `Impossible de joindre Jellyfin à « ${url} » : ${e.message}. Note: si Frame tourne dans Docker, n'utilisez pas "localhost" mais l'adresse IP du serveur (ex: http://192.168.x.x:8096).` 
+    } catch (err: any) {
+      logger.warn('Jellyfin', 'Échec testServer', { url, error: err?.message });
+      if (err?.message?.includes('Hôte interne refusé') || err?.message?.includes('URL invalide') || err?.message?.includes('Protocole non autorisé')) {
+        return { success: false, message: err.message };
+      }
+      return {
+        success: false,
+        message: `Impossible de joindre Jellyfin à l'adresse "${url}". Vérifiez que le conteneur Frame a accès à cette IP/port.`,
       };
     }
   }
 
   /**
-   * Authentifier un utilisateur Jellyfin par identifiant et mot de passe
+   * Authentifier un utilisateur sur le serveur Jellyfin via nom d'utilisateur et mot de passe
    */
   public static async authenticateUser(
-    username: string, 
-    password: string, 
-    serverUrlOverride?: string
-  ): Promise<{
-    userId: string;
-    accessToken: string;
-    serverName: string;
-  }> {
-    const rawUrl = serverUrlOverride || this.getUrl();
-    if (!rawUrl) {
-      throw new Error('Veuillez renseigner l\'URL de votre serveur Jellyfin (ex: http://192.168.1.50:8096).');
+    username: string,
+    password?: string,
+    customServerUrl?: string
+  ): Promise<{ userId: string; accessToken: string; serverName?: string; serverUrl: string }> {
+    const url = (customServerUrl || this.getServerUrl()).replace(/\/$/, '').trim();
+    if (!url) {
+      throw new Error("Veuillez saisir l'URL de votre serveur Jellyfin (ex: http://192.168.1.50:8096).");
     }
-    const url = rawUrl.replace(/\/$/, '');
 
+    await assertSafeTarget(url);
+
+    let res: Response;
     try {
-      const res = await fetch(`${url}/Users/AuthenticateByName`, {
+      res = await fetch(`${url}/Users/AuthenticateByName`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json',
-          'Authorization': this.getAuthHeader(),
-          'X-Emby-Authorization': this.getAuthHeader(),
-        },
+        headers: this.getAuthHeaders(),
         body: JSON.stringify({
           Username: username.trim(),
           Pw: password || '',
         }),
+        redirect: 'manual',
+        signal: AbortSignal.timeout(10000),
       });
-
-      if (!res.ok) {
-        const errText = await res.text().catch(() => '');
-        if (res.status === 401) {
-          throw new Error(`Jellyfin a rejeté ces identifiants (401 Non Autorisé). Vérifiez que l'identifiant « ${username} » et le mot de passe sont corrects.`);
-        } else if (res.status === 404) {
-          throw new Error(`Serveur Jellyfin introuvable à l'adresse « ${url} » (404). Vérifiez l'URL et le port (ex: http://192.168.x.x:8096).`);
-        } else {
-          throw new Error(`Jellyfin a renvoyé une erreur (${res.status}): ${errText || 'Connexion refusée'}`);
-        }
-      }
-
-      const data = await res.json() as any;
-      if (!data.User || !data.AccessToken) {
-        throw new Error('Réponse inattendue de Jellyfin (jeton de session manquant).');
-      }
-
-      return {
-        userId: data.User.Id,
-        accessToken: data.AccessToken,
-        serverName: data.ServerId || 'Jellyfin',
-      };
-    } catch (fetchErr: any) {
-      if (fetchErr.message && (fetchErr.message.includes('Jellyfin a rejeté') || fetchErr.message.includes('introuvable'))) {
-        throw fetchErr;
-      }
-      throw new Error(`Impossible de contacter Jellyfin sur « ${url} » : ${fetchErr.message}. Attention : dans un conteneur Docker, n'utilisez pas "localhost" mais l'adresse IP de votre serveur.`);
+    } catch (netErr: any) {
+      logger.warn('Jellyfin', 'Erreur réseau authenticateUser', { url, error: netErr?.message });
+      throw new Error(
+        `Impossible de joindre le serveur Jellyfin (${url}). Si Frame est dans Docker, utilisez l'IP locale du serveur (ex: http://192.168.x.x:8096) et non localhost.`
+      );
     }
+
+    if (!res.ok) {
+      if (res.status === 401) {
+        throw new Error(
+          `Identifiants refusés par Jellyfin (401). Astuce : Si vous utilisez LDAP ou SSO sur Jellyfin, utilisez l'onglet « Clé API » juste à côté.`
+        );
+      }
+      throw new Error(`Erreur Jellyfin (${res.status}) lors de l'authentification.`);
+    }
+
+    const data = await res.json();
+    return {
+      userId: data.User.Id,
+      accessToken: data.AccessToken,
+      serverUrl: url,
+    };
   }
 
   /**
-   * Lier un compte Jellyfin directement via une Clé API Jellyfin ou User Token
+   * Authentifier un utilisateur sur Jellyfin via une Clé API (idéal si LDAP/SSO actif ou mot de passe refusé)
    */
   public static async authenticateWithApiKey(
     apiKey: string,
-    usernameOrId?: string,
-    serverUrlOverride?: string
-  ): Promise<{
-    userId: string;
-    accessToken: string;
-    serverName: string;
-  }> {
-    const rawUrl = serverUrlOverride || this.getUrl();
-    if (!rawUrl) throw new Error('URL Jellyfin non configurée.');
-    const url = rawUrl.replace(/\/$/, '');
-
-    try {
-      const res = await fetch(`${url}/Users`, {
-        headers: {
-          'Accept': 'application/json',
-          'Authorization': this.getAuthHeader(apiKey.trim()),
-          'X-Emby-Token': apiKey.trim(),
-        },
-      });
-
-      if (!res.ok) {
-        throw new Error(`Clé API Jellyfin rejetée (${res.status}).`);
-      }
-
-      const users = await res.json() as any[];
-      if (!users || users.length === 0) {
-        throw new Error('Aucun utilisateur trouvé sur ce serveur Jellyfin.');
-      }
-
-      let matchedUser = users[0];
-      if (usernameOrId && usernameOrId.trim()) {
-        const target = usernameOrId.trim().toLowerCase();
-        const found = users.find((u) => u.Name.toLowerCase() === target || u.Id.toLowerCase() === target);
-        if (found) matchedUser = found;
-      }
-
-      return {
-        userId: matchedUser.Id,
-        accessToken: apiKey.trim(),
-        serverName: matchedUser.ServerId || 'Jellyfin',
-      };
-    } catch (e: any) {
-      throw new Error(`Erreur validation Clé API Jellyfin: ${e.message}`);
+    username?: string,
+    customServerUrl?: string
+  ): Promise<{ userId: string; accessToken: string; username: string; serverUrl: string }> {
+    const url = (customServerUrl || this.getServerUrl()).replace(/\/$/, '').trim();
+    if (!url) {
+      throw new Error("Veuillez saisir l'URL de votre serveur Jellyfin.");
     }
+
+    await assertSafeTarget(url);
+
+    const cleanKey = apiKey.trim();
+    let res: Response;
+    try {
+      res = await fetch(`${url}/Users`, {
+        headers: {
+          ...this.getAuthHeaders(cleanKey),
+          'X-MediaBrowser-Token': cleanKey,
+        },
+        redirect: 'manual',
+        signal: AbortSignal.timeout(10000),
+      });
+    } catch (netErr: any) {
+      logger.warn('Jellyfin', 'Erreur réseau authenticateWithApiKey', { url, error: netErr?.message });
+      throw new Error(`Impossible de joindre le serveur Jellyfin (${url}).`);
+    }
+
+    if (!res.ok) {
+      throw new Error(`Clé API Jellyfin invalide ou refusée (code HTTP ${res.status}).`);
+    }
+
+    const users = await res.json();
+    if (!Array.isArray(users) || users.length === 0) {
+      throw new Error('Aucun utilisateur trouvé sur ce serveur Jellyfin.');
+    }
+
+    let matchedUser = users[0];
+    if (username && username.trim()) {
+      const target = username.trim().toLowerCase();
+      const found = users.find((u: any) => u.Name && u.Name.toLowerCase() === target);
+      if (!found) {
+        const availableNames = users.map((u: any) => u.Name).join(', ');
+        throw new Error(`Utilisateur "${username}" introuvable sur Jellyfin. Utilisateurs existants : ${availableNames}`);
+      }
+      matchedUser = found;
+    }
+
+    return {
+      userId: matchedUser.Id,
+      accessToken: cleanKey,
+      username: matchedUser.Name,
+      serverUrl: url,
+    };
   }
 
   /**
-   * Rechercher un média dans Jellyfin par son ID TMDB ou titre (vérification stricte anti faux-positifs)
+   * Vérifier si un média (par son TMDB ID) est présent dans la médiathèque Jellyfin de l'utilisateur
    */
   public static async findItemByTmdbId(
-    accessToken: string,
-    jellyfinUserId: string,
+    frameUserId: number,
+    mediaType: 'movie' | 'tv',
     tmdbId: number,
-    title?: string,
-    mediaType: 'movie' | 'tv' = 'movie',
-    serverUrlOverride?: string,
-    year?: number
-  ): Promise<{ found: boolean; itemId?: string; name?: string; serverUrl: string }> {
-    const rawUrl = serverUrlOverride || this.getUrl();
-    if (!rawUrl || !accessToken) return { found: false, serverUrl: rawUrl || '' };
-    const url = rawUrl.replace(/\/$/, '');
+    expectedTitle?: string,
+    expectedYear?: number
+  ): Promise<{ inJellyfin: boolean; itemId?: string; name?: string; serverUrl?: string }> {
+    const userRow = db
+      .prepare('SELECT jellyfin_user_id, jellyfin_token, jellyfin_server_url FROM users WHERE id = ?')
+      .get(frameUserId) as any;
 
-    const typeFilter = mediaType === 'movie' ? 'Movie' : 'Series';
-
-    const cleanTitle = (str: string) =>
-      str
-        .toLowerCase()
-        .normalize('NFD')
-        .replace(/[\u0300-\u036f]/g, '')
-        .replace(/[^a-z0-9]/g, '')
-        .trim();
+    const url = (userRow?.jellyfin_server_url || this.getServerUrl()).replace(/\/$/, '').trim();
+    if (!url || !userRow || !userRow.jellyfin_user_id || !userRow.jellyfin_token) {
+      return { inJellyfin: false };
+    }
 
     try {
-      // 1. Recherche directe par Provider ID TMDB (minuscule tmdb.id)
-      const queryUrl = `${url}/Users/${jellyfinUserId}/Items?Recursive=true&AnyProviderIdEquals=tmdb.${tmdbId}&IncludeItemTypes=${typeFilter}&Fields=ProviderIds,ProductionYear,OriginalTitle`;
-      const res = await fetch(queryUrl, {
-        headers: {
-          'X-Emby-Authorization': this.getAuthHeader(accessToken),
-          'Authorization': this.getAuthHeader(accessToken),
-        },
-      });
+      await assertSafeTarget(url);
+      const includeType = mediaType === 'movie' ? 'Movie' : 'Series';
+      const targetTmdbStr = String(tmdbId);
+
+      // Stratégie 1 : Recherche par ProviderIds=Tmdb.xxxx
+      const res = await fetch(
+        `${url}/Users/${userRow.jellyfin_user_id}/Items?Recursive=true&IncludeItemTypes=${includeType}&Fields=ProviderIds,ProductionYear,OriginalTitle&AnyProviderIdEquals=tmdb.${tmdbId}`,
+        {
+          headers: {
+            ...this.getAuthHeaders(userRow.jellyfin_token),
+            'X-MediaBrowser-Token': userRow.jellyfin_token,
+          },
+          redirect: 'manual',
+          signal: AbortSignal.timeout(8000),
+        }
+      );
 
       if (res.ok) {
-        const data = await res.json() as any;
-        if (data.Items && data.Items.length > 0) {
-          // VÉRIFICATION STRICTE : l'item doit réellement avoir ce tmdbId dans ProviderIds
-          const exactMatch = data.Items.find((item: any) => {
-            const pId = item.ProviderIds?.Tmdb || item.ProviderIds?.tmdb || item.ProviderIds?.TmdbId;
-            return pId && String(pId) === String(tmdbId);
-          });
-          if (exactMatch) {
-            return { found: true, itemId: exactMatch.Id, name: exactMatch.Name, serverUrl: url };
-          }
-        }
-      }
+        const data = await res.json();
+        const items = data.Items || [];
 
-      // 2. Recherche avec Provider ID Majuscule (Tmdb.id)
-      const queryUrlUpper = `${url}/Users/${jellyfinUserId}/Items?Recursive=true&AnyProviderIdEquals=Tmdb.${tmdbId}&IncludeItemTypes=${typeFilter}&Fields=ProviderIds,ProductionYear,OriginalTitle`;
-      const resUpper = await fetch(queryUrlUpper, {
-        headers: {
-          'X-Emby-Authorization': this.getAuthHeader(accessToken),
-          'Authorization': this.getAuthHeader(accessToken),
-        },
-      });
-
-      if (resUpper.ok) {
-        const dataUpper = await resUpper.json() as any;
-        if (dataUpper.Items && dataUpper.Items.length > 0) {
-          const exactMatch = dataUpper.Items.find((item: any) => {
-            const pId = item.ProviderIds?.Tmdb || item.ProviderIds?.tmdb || item.ProviderIds?.TmdbId;
-            return pId && String(pId) === String(tmdbId);
-          });
-          if (exactMatch) {
-            return { found: true, itemId: exactMatch.Id, name: exactMatch.Name, serverUrl: url };
-          }
-        }
-      }
-
-      // 3. Repli par recherche de titre stricte
-      if (title && title.trim()) {
-        const searchUrl = `${url}/Users/${jellyfinUserId}/Items?Recursive=true&SearchTerm=${encodeURIComponent(title.trim())}&IncludeItemTypes=${typeFilter}&Fields=ProviderIds,ProductionYear,OriginalTitle&Limit=20`;
-        const searchRes = await fetch(searchUrl, {
-          headers: {
-            'X-Emby-Authorization': this.getAuthHeader(accessToken),
-            'Authorization': this.getAuthHeader(accessToken),
-          },
+        const exactMatch = items.find((it: any) => {
+          const pids = it.ProviderIds || {};
+          const itemTmdb = pids.Tmdb || pids.tmdb || pids.TMDB;
+          return itemTmdb && String(itemTmdb) === targetTmdbStr;
         });
 
+        if (exactMatch) {
+          return {
+            inJellyfin: true,
+            itemId: exactMatch.Id,
+            name: exactMatch.Name,
+            serverUrl: url,
+          };
+        }
+      }
+
+      // Stratégie 2 : Recherche textuelle stricte par SearchTerm si un titre est fourni
+      if (expectedTitle) {
+        const searchRes = await fetch(
+          `${url}/Users/${userRow.jellyfin_user_id}/Items?Recursive=true&IncludeItemTypes=${includeType}&Fields=ProviderIds,ProductionYear,OriginalTitle&SearchTerm=${encodeURIComponent(expectedTitle)}&Limit=20`,
+          {
+            headers: {
+              ...this.getAuthHeaders(userRow.jellyfin_token),
+              'X-MediaBrowser-Token': userRow.jellyfin_token,
+            },
+            redirect: 'manual',
+            signal: AbortSignal.timeout(8000),
+          }
+        );
+
         if (searchRes.ok) {
-          const data = await searchRes.json() as any;
-          if (data.Items && data.Items.length > 0) {
-            const normalizedTarget = cleanTitle(title);
+          const searchData = await searchRes.json();
+          const candidates = searchData.Items || [];
+          const cleanExpected = expectedTitle.trim().toLowerCase();
 
-            for (const item of data.Items) {
-              // Vérifier si le TMDB ID correspond dans les métadonnées de l'élément
-              const pId = item.ProviderIds?.Tmdb || item.ProviderIds?.tmdb || item.ProviderIds?.TmdbId;
-              if (pId && String(pId) === String(tmdbId)) {
-                return { found: true, itemId: item.Id, name: item.Name, serverUrl: url };
-              }
+          for (const it of candidates) {
+            const pids = it.ProviderIds || {};
+            const itemTmdb = pids.Tmdb || pids.tmdb || pids.TMDB;
 
-              // Comparaison stricte des titres normalisés
-              const itemNameNorm = item.Name ? cleanTitle(item.Name) : '';
-              const itemOrigNorm = item.OriginalTitle ? cleanTitle(item.OriginalTitle) : '';
+            if (itemTmdb && String(itemTmdb) === targetTmdbStr) {
+              return { inJellyfin: true, itemId: it.Id, name: it.Name, serverUrl: url };
+            }
 
-              const nameMatches = (itemNameNorm.length > 0 && itemNameNorm === normalizedTarget) ||
-                                  (itemOrigNorm.length > 0 && itemOrigNorm === normalizedTarget);
+            if (itemTmdb && String(itemTmdb) !== targetTmdbStr) {
+              continue;
+            }
 
-              if (nameMatches) {
-                // Si l'année est connue et l'élément a une année de production, s'assurer que l'écart est <= 1 an
-                if (year && item.ProductionYear) {
-                  if (Math.abs(item.ProductionYear - year) <= 1) {
-                    return { found: true, itemId: item.Id, name: item.Name, serverUrl: url };
-                  }
-                } else {
-                  return { found: true, itemId: item.Id, name: item.Name, serverUrl: url };
-                }
-              }
+            const nameMatch =
+              it.Name?.trim().toLowerCase() === cleanExpected ||
+              it.OriginalTitle?.trim().toLowerCase() === cleanExpected;
+
+            const yearMatch =
+              !expectedYear ||
+              !it.ProductionYear ||
+              Math.abs(Number(it.ProductionYear) - expectedYear) <= 1;
+
+            if (nameMatch && yearMatch) {
+              return { inJellyfin: true, itemId: it.Id, name: it.Name, serverUrl: url };
             }
           }
         }
       }
 
-      return { found: false, serverUrl: url };
+      return { inJellyfin: false };
     } catch {
-      return { found: false, serverUrl: url };
+      return { inJellyfin: false };
     }
   }
 
   /**
-   * Obtenir ce que l'utilisateur est actuellement en train de regarder sur Jellyfin
+   * Obtenir le média en cours de lecture pour un utilisateur Frame lié à Jellyfin
    */
-  public static async getCurrentlyPlaying(accessToken: string, jellyfinUserId: string, serverUrlOverride?: string): Promise<any[]> {
-    const rawUrl = serverUrlOverride || this.getUrl();
-    if (!rawUrl || !accessToken) return [];
-    const url = rawUrl.replace(/\/$/, '');
+  public static async getCurrentlyPlaying(frameUserId: number): Promise<JellyfinPlayingItem[]> {
+    const userRow = db
+      .prepare('SELECT jellyfin_user_id, jellyfin_token, jellyfin_server_url FROM users WHERE id = ?')
+      .get(frameUserId) as any;
+
+    const url = (userRow?.jellyfin_server_url || this.getServerUrl()).replace(/\/$/, '').trim();
+    if (!url || !userRow || !userRow.jellyfin_user_id || !userRow.jellyfin_token) {
+      return [];
+    }
 
     try {
+      await assertSafeTarget(url);
       const res = await fetch(`${url}/Sessions`, {
         headers: {
-          'X-Emby-Authorization': this.getAuthHeader(accessToken),
-          'Authorization': this.getAuthHeader(accessToken),
+          ...this.getAuthHeaders(userRow.jellyfin_token),
+          'X-MediaBrowser-Token': userRow.jellyfin_token,
         },
+        redirect: 'manual',
+        signal: AbortSignal.timeout(8000),
       });
 
       if (!res.ok) return [];
-      const sessions = await res.json() as any[];
 
-      const userSessions = sessions.filter((s) => s.UserId === jellyfinUserId && s.NowPlayingItem);
+      const sessions = await res.json();
+      const userSessions = sessions.filter(
+        (s: any) => s.UserId === userRow.jellyfin_user_id && s.NowPlayingItem
+      );
 
-      return userSessions.map((s) => {
+      return userSessions.map((s: any) => {
         const item = s.NowPlayingItem;
-        const ticks = s.PlayState?.PositionTicks || 0;
-        const total = item.RunTimeTicks || 1;
-        const percent = Math.min(100, Math.round((ticks / total) * 100));
+        const playState = s.PlayState || {};
+        const positionTicks = playState.PositionTicks || 0;
+        const runTimeTicks = item.RunTimeTicks || 1;
+        const percentPlayed = Math.min(100, Math.round((positionTicks / runTimeTicks) * 100));
 
         return {
           id: item.Id,
           title: item.Name,
-          type: item.Type === 'Episode' ? 'tv' : 'movie',
           seriesName: item.SeriesName,
+          type: item.Type,
           seasonNumber: item.ParentIndexNumber,
           episodeNumber: item.IndexNumber,
-          percentPlayed: percent,
-          tmdbId: item.ProviderIds?.Tmdb ? parseInt(item.ProviderIds.Tmdb, 10) : null,
+          positionTicks,
+          runTimeTicks,
+          percentPlayed,
+          isPaused: Boolean(playState.IsPaused),
         };
       });
     } catch {
@@ -348,71 +355,72 @@ export class JellyfinService {
   }
 
   /**
-   * Synchroniser l'historique complet d'un utilisateur depuis Jellyfin vers Frame
+   * Synchroniser les films et séries marqués comme "Lus" (Played) dans Jellyfin vers Frame
    */
-  public static async syncWatchedFromJellyfin(
-    frameUserId: number, 
-    accessToken: string, 
-    jellyfinUserId: string,
-    serverUrlOverride?: string
-  ): Promise<{ importedCount: number }> {
-    const rawUrl = serverUrlOverride || this.getUrl();
-    if (!rawUrl || !accessToken) throw new Error('Jellyfin non connecté');
-    const url = rawUrl.replace(/\/$/, '');
+  public static async syncWatchedFromJellyfin(frameUserId: number): Promise<{ importedMovies: number; importedShows: number }> {
+    const userRow = db
+      .prepare('SELECT jellyfin_user_id, jellyfin_token, jellyfin_server_url FROM users WHERE id = ?')
+      .get(frameUserId) as any;
 
-    const queryUrl = `${url}/Users/${jellyfinUserId}/Items?Recursive=true&Filters=IsPlayed&IncludeItemTypes=Movie,Series&Fields=ProviderIds,Overview,Genres,PremiereDate`;
-    const res = await fetch(queryUrl, {
-      headers: {
-        'X-Emby-Authorization': this.getAuthHeader(accessToken),
-        'Authorization': this.getAuthHeader(accessToken),
-      },
-    });
-
-    if (!res.ok) {
-      throw new Error(`Erreur Jellyfin (${res.status})`);
+    const url = (userRow?.jellyfin_server_url || this.getServerUrl()).replace(/\/$/, '').trim();
+    if (!url || !userRow || !userRow.jellyfin_user_id || !userRow.jellyfin_token) {
+      throw new Error('Votre compte Jellyfin n\'est pas encore lié.');
     }
 
-    const data = await res.json() as any;
-    const items = data.Items || [];
+    await assertSafeTarget(url);
 
-    let importedCount = 0;
+    let importedMovies = 0;
+    let importedShows = 0;
+
+    const headers = {
+      ...this.getAuthHeaders(userRow.jellyfin_token),
+      'X-MediaBrowser-Token': userRow.jellyfin_token,
+    };
+
     const insertStmt = db.prepare(`
-      INSERT INTO watched_items (
-        user_id, tmdb_id, media_type, title, poster_path, backdrop_path, release_date, genres, overview, watched_at, synced_jellyfin
-      )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, 1)
+      INSERT INTO watched_items (user_id, tmdb_id, media_type, title, watched_at, season_number, episode_number)
+      VALUES (?, ?, ?, ?, ?, 0, 0)
       ON CONFLICT(user_id, tmdb_id, media_type, season_number, episode_number) DO UPDATE SET
-        poster_path = COALESCE(watched_items.poster_path, excluded.poster_path),
-        backdrop_path = COALESCE(watched_items.backdrop_path, excluded.backdrop_path),
-        synced_jellyfin = 1
+        title = excluded.title,
+        watched_at = COALESCE(watched_items.watched_at, excluded.watched_at)
     `);
 
-    for (const it of items) {
-      const tmdbId = it.ProviderIds?.Tmdb ? parseInt(it.ProviderIds.Tmdb, 10) : null;
-      if (tmdbId) {
-        try {
-          const mediaType = it.Type === 'Movie' ? 'movie' : 'tv';
-          const posterUrl = it.ImageTags?.Primary ? `${url}/Items/${it.Id}/Images/Primary?fillWidth=500&quality=90` : null;
-          const backdropUrl = it.BackdropImageTags && it.BackdropImageTags.length > 0 ? `${url}/Items/${it.Id}/Images/Backdrop/0?fillWidth=1280&quality=85` : null;
+    const nowIso = new Date().toISOString();
 
-          insertStmt.run(
-            frameUserId,
-            tmdbId,
-            mediaType,
-            it.Name || 'Sans titre',
-            posterUrl,
-            backdropUrl,
-            it.PremiereDate ? it.PremiereDate.split('T')[0] : null,
-            it.Genres ? JSON.stringify(it.Genres.map((name: string, i: number) => ({ id: i, name }))) : null,
-            it.Overview || null
-          );
-          importedCount++;
-        } catch {
-          // Doublon
+    // 1. Récupérer les films vus avec leurs ProviderIds (Tmdb)
+    const moviesRes = await fetch(
+      `${url}/Users/${userRow.jellyfin_user_id}/Items?IncludeItemTypes=Movie&Recursive=true&Filters=IsPlayed&Fields=ProviderIds`,
+      { headers, redirect: 'manual', signal: AbortSignal.timeout(15000) }
+    );
+
+    if (moviesRes.ok) {
+      const moviesData = await moviesRes.json();
+      for (const item of moviesData.Items || []) {
+        const tmdbId = item.ProviderIds?.Tmdb ? parseInt(item.ProviderIds.Tmdb, 10) : null;
+        if (tmdbId) {
+          insertStmt.run(frameUserId, tmdbId, 'movie', item.Name || 'Film', nowIso);
+          importedMovies++;
         }
       }
     }
 
-    return { importedCount };
+    // 2. Récupérer les séries vues
+    const showsRes = await fetch(
+      `${url}/Users/${userRow.jellyfin_user_id}/Items?IncludeItemTypes=Series&Recursive=true&Filters=IsPlayed&Fields=ProviderIds`,
+      { headers, redirect: 'manual', signal: AbortSignal.timeout(15000) }
+    );
+
+    if (showsRes.ok) {
+      const showsData = await showsRes.json();
+      for (const item of showsData.Items || []) {
+        const tmdbId = item.ProviderIds?.Tmdb ? parseInt(item.ProviderIds.Tmdb, 10) : null;
+        if (tmdbId) {
+          insertStmt.run(frameUserId, tmdbId, 'tv', item.Name || 'Série', nowIso);
+          importedShows++;
+        }
+      }
+    }
+
+    return { importedMovies, importedShows };
   }
 }

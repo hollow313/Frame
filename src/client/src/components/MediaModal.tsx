@@ -22,7 +22,7 @@ import { MediaItem, TvEpisode } from '../types';
 import { api } from '../services/api';
 
 interface MediaModalProps {
-  mediaType: 'movie' | 'tv';
+  mediaType: 'movie' | 'tv' | 'manga';
   id: number;
   isOpen: boolean;
   onClose: () => void;
@@ -51,6 +51,7 @@ export const MediaModal: React.FC<MediaModalProps> = ({
   const [selectedSeason, setSelectedSeason] = useState<number>(1);
   const [seasonEpisodes, setSeasonEpisodes] = useState<TvEpisode[]>([]);
   const [loadingSeason, setLoadingSeason] = useState<boolean>(false);
+  const [watchedEpisodeKeys, setWatchedEpisodeKeys] = useState<Set<string>>(new Set());
   const [sharingMedia, setSharingMedia] = useState<boolean>(false);
 
   const wrapText = (ctx: CanvasRenderingContext2D, text: string, maxWidth: number): string[] => {
@@ -289,18 +290,27 @@ export const MediaModal: React.FC<MediaModalProps> = ({
   const loadDetails = async () => {
     setLoading(true);
     try {
-      const details = await api.getMediaDetails(mediaType, id);
+      const apiType = mediaType === 'manga' ? 'tv' : mediaType;
+      const details = await api.getMediaDetails(apiType, id);
       setItem(details);
 
-      // Si c'est une série, charger automatiquement la première saison valide
-      if (mediaType === 'tv') {
+      // Si c'est une série, charger automatiquement la première saison valide et les épisodes vus
+      if (apiType === 'tv') {
         const firstSeason = details.seasons?.find((s) => s.season_number > 0)?.season_number || 1;
         setSelectedSeason(firstSeason);
         loadSeasonEpisodes(details.id, firstSeason);
+        api.getWatchedEpisodes(details.id)
+          .then((res) => {
+            const keys = new Set<string>(
+              (res.episodes || []).map((ep: any) => `${ep.seasonNumber ?? ep.season_number}:${ep.episodeNumber ?? ep.episode_number}`)
+            );
+            setWatchedEpisodeKeys(keys);
+          })
+          .catch(() => setWatchedEpisodeKeys(new Set()));
       }
 
       // Charger le statut Seer en parallèle
-      api.checkSeerStatus(mediaType, id)
+      api.checkSeerStatus(apiType, id)
         .then((res) => setSeerStatus(res))
         .catch(() => {});
 
@@ -308,7 +318,7 @@ export const MediaModal: React.FC<MediaModalProps> = ({
       const tvdbId = (details as any).external_ids?.tvdb_id;
 
       // Charger le statut Sonarr / Radarr
-      if (mediaType === 'movie') {
+      if (apiType === 'movie') {
         api.checkRadarrMovie(id)
           .then((res) => setArrStatus(res))
           .catch(() => {});
@@ -319,13 +329,86 @@ export const MediaModal: React.FC<MediaModalProps> = ({
       }
 
       // Vérifier si présent dans Jellyfin (avec titre et année pour vérification stricte)
-      api.checkJellyfinMedia(mediaType, id, details.title, releaseYear)
+      api.checkJellyfinMedia(apiType, id, details.title, releaseYear)
         .then((res) => setJellyfinItem(res))
         .catch(() => {});
     } catch (err) {
       console.error('Erreur chargement détails média', err);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleToggleEpisodeWatched = async (ep: TvEpisode) => {
+    if (!item) return;
+    const key = `${selectedSeason}:${ep.episode_number}`;
+    const isEpWatched = watchedEpisodeKeys.has(key);
+
+    // Optimistic UI update
+    setWatchedEpisodeKeys((prev) => {
+      const next = new Set(prev);
+      if (isEpWatched) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+
+    try {
+      if (isEpWatched) {
+        await api.unmarkEpisodeWatched(item.id, selectedSeason, ep.episode_number);
+      } else {
+        await api.markEpisodeWatched({
+          tmdbId: item.id,
+          seasonNumber: selectedSeason,
+          episodeNumber: ep.episode_number,
+          title: item.title,
+          posterPath: item.poster_path,
+          backdropPath: item.backdrop_path,
+          releaseDate: item.release_date,
+          genres: item.genres,
+          runtime: ep.runtime || item.runtime,
+        });
+        setItem((prev) => (prev ? { ...prev, isWatched: true } : prev));
+      }
+    } catch (err) {
+      console.error('Erreur bascule épisode vu', err);
+    }
+  };
+
+  const handleToggleSeasonWatched = async () => {
+    if (!item || seasonEpisodes.length === 0) return;
+    const allWatched = seasonEpisodes.every((ep) =>
+      watchedEpisodeKeys.has(`${selectedSeason}:${ep.episode_number}`)
+    );
+
+    setWatchedEpisodeKeys((prev) => {
+      const next = new Set(prev);
+      for (const ep of seasonEpisodes) {
+        const k = `${selectedSeason}:${ep.episode_number}`;
+        if (allWatched) next.delete(k);
+        else next.add(k);
+      }
+      return next;
+    });
+
+    try {
+      if (allWatched) {
+        await api.unmarkSeasonWatched(item.id, selectedSeason);
+      } else {
+        await api.markSeasonWatched({
+          tmdbId: item.id,
+          seasonNumber: selectedSeason,
+          episodeCount: seasonEpisodes.length,
+          episodes: seasonEpisodes.map((e) => ({ episodeNumber: e.episode_number, runtime: e.runtime })),
+          title: item.title,
+          posterPath: item.poster_path,
+          backdropPath: item.backdrop_path,
+          releaseDate: item.release_date,
+          genres: item.genres,
+        });
+        setItem((prev) => (prev ? { ...prev, isWatched: true } : prev));
+      }
+    } catch (err) {
+      console.error('Erreur bascule saison vue', err);
     }
   };
 
@@ -340,13 +423,14 @@ export const MediaModal: React.FC<MediaModalProps> = ({
     if (!item) return;
     setRequestingSeer(true);
     try {
+      const apiType = mediaType === 'manga' ? 'tv' : mediaType;
       await api.requestOnSeer({
-        mediaType,
+        mediaType: apiType,
         mediaId: item.id,
         is4k: false,
         seasons: 'all',
       });
-      const updated = await api.checkSeerStatus(mediaType, item.id);
+      const updated = await api.checkSeerStatus(apiType, item.id);
       setSeerStatus(updated);
       alert('Demande envoyée avec succès à Seer !');
     } catch (err: any) {
@@ -361,8 +445,9 @@ export const MediaModal: React.FC<MediaModalProps> = ({
     if (!confirm('Voulez-vous vraiment annuler cette demande Seer ?')) return;
     setCancellingSeer(true);
     try {
+      const apiType = mediaType === 'manga' ? 'tv' : mediaType;
       await api.deleteSeerRequest(seerStatus.requestId);
-      const updated = await api.checkSeerStatus(mediaType, id);
+      const updated = await api.checkSeerStatus(apiType, id);
       setSeerStatus(updated);
       alert('Demande annulée avec succès.');
     } catch (err: any) {
@@ -707,22 +792,69 @@ export const MediaModal: React.FC<MediaModalProps> = ({
                     <div className="flex flex-wrap items-center gap-1.5">
                       {item.seasons
                         .filter((s) => s.season_number > 0)
-                        .map((s) => (
-                          <button
-                            key={s.id}
-                            onClick={() => handleSelectSeason(s.season_number)}
-                            className={`px-3 py-1 rounded-xl text-xs font-bold transition-all ${
-                              selectedSeason === s.season_number
-                                ? 'bg-primary-600 text-white shadow'
-                                : 'bg-dark-800 text-slate-400 hover:text-white hover:bg-dark-750'
-                            }`}
-                          >
-                            <span>Saison {s.season_number}</span>
-                            <span className="ml-1 text-[10px] opacity-75">({s.episode_count})</span>
-                          </button>
-                        ))}
+                        .map((s) => {
+                          const watchedInSeason = Array.from(watchedEpisodeKeys).filter((k) =>
+                            k.startsWith(`${s.season_number}:`)
+                          ).length;
+                          return (
+                            <button
+                              key={s.id}
+                              onClick={() => handleSelectSeason(s.season_number)}
+                              className={`px-3 py-1 rounded-xl text-xs font-bold transition-all ${
+                                selectedSeason === s.season_number
+                                  ? 'bg-primary-600 text-white shadow'
+                                  : 'bg-dark-800 text-slate-400 hover:text-white hover:bg-dark-750'
+                              }`}
+                            >
+                              <span>Saison {s.season_number}</span>
+                              <span className="ml-1 text-[10px] opacity-75">
+                                ({watchedInSeason}/{s.episode_count})
+                              </span>
+                            </button>
+                          );
+                        })}
                     </div>
                   </div>
+
+                  {/* Barre de progression de la saison + bouton Tout marquer vu */}
+                  {seasonEpisodes.length > 0 && (() => {
+                    const seasonWatchedCount = seasonEpisodes.filter((ep) =>
+                      watchedEpisodeKeys.has(`${selectedSeason}:${ep.episode_number}`)
+                    ).length;
+                    const allSeasonWatched = seasonWatchedCount === seasonEpisodes.length;
+                    const pct = Math.round((seasonWatchedCount / seasonEpisodes.length) * 100);
+                    return (
+                      <div className="flex flex-wrap items-center justify-between gap-3 p-3 rounded-xl bg-dark-850/90 border border-white/5">
+                        <div className="flex-1 min-w-[180px] space-y-1">
+                          <div className="flex items-center justify-between text-xs">
+                            <span className="font-semibold text-slate-300">
+                              Saison {selectedSeason} : {seasonWatchedCount} / {seasonEpisodes.length} épisodes vus
+                            </span>
+                            <span className="font-mono font-bold text-emerald-400">{pct}%</span>
+                          </div>
+                          <div className="w-full h-1.5 bg-dark-800 rounded-full overflow-hidden">
+                            <div
+                              className="h-full bg-emerald-500 rounded-full transition-all duration-300"
+                              style={{ width: `${pct}%` }}
+                            />
+                          </div>
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={handleToggleSeasonWatched}
+                          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
+                            allSeasonWatched
+                              ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 hover:bg-rose-500/20 hover:text-rose-300'
+                              : 'bg-emerald-600 hover:bg-emerald-500 text-white shadow'
+                          }`}
+                        >
+                          <Check className="w-3.5 h-3.5" />
+                          <span>{allSeasonWatched ? 'Décocher la saison' : 'Tout marquer vu'}</span>
+                        </button>
+                      </div>
+                    );
+                  })()}
 
                   {/* Liste des épisodes de la saison sélectionnée */}
                   {loadingSeason ? (
@@ -731,57 +863,77 @@ export const MediaModal: React.FC<MediaModalProps> = ({
                     </div>
                   ) : seasonEpisodes.length > 0 ? (
                     <div className="space-y-3 max-h-96 overflow-y-auto pr-1">
-                      {seasonEpisodes.map((ep) => (
-                        <div
-                          key={ep.id}
-                          className="p-3.5 rounded-xl bg-dark-850/80 border border-white/5 hover:border-white/10 flex flex-col sm:flex-row gap-3.5 transition-colors"
-                        >
-                          {/* Vignette de l'épisode */}
-                          {ep.still_path ? (
-                            <img
-                              src={ep.still_path}
-                              alt={ep.name}
-                              className="w-full sm:w-36 aspect-video rounded-lg object-cover border border-white/10 shrink-0"
-                            />
-                          ) : (
-                            <div className="w-full sm:w-36 aspect-video rounded-lg bg-dark-800 border border-white/5 flex items-center justify-center text-slate-500 shrink-0">
-                              <Tv className="w-6 h-6" />
-                            </div>
-                          )}
+                      {seasonEpisodes.map((ep) => {
+                        const isEpWatched = watchedEpisodeKeys.has(`${selectedSeason}:${ep.episode_number}`);
+                        return (
+                          <div
+                            key={ep.id}
+                            className={`p-3.5 rounded-xl border flex flex-col sm:flex-row gap-3.5 transition-colors ${
+                              isEpWatched
+                                ? 'bg-emerald-950/20 border-emerald-500/30'
+                                : 'bg-dark-850/80 border-white/5 hover:border-white/10'
+                            }`}
+                          >
+                            {/* Vignette de l'épisode */}
+                            {ep.still_path ? (
+                              <img
+                                src={ep.still_path}
+                                alt={ep.name}
+                                className="w-full sm:w-36 aspect-video rounded-lg object-cover border border-white/10 shrink-0"
+                              />
+                            ) : (
+                              <div className="w-full sm:w-36 aspect-video rounded-lg bg-dark-800 border border-white/5 flex items-center justify-center text-slate-500 shrink-0">
+                                <Tv className="w-6 h-6" />
+                              </div>
+                            )}
 
-                          <div className="flex-1 min-w-0 space-y-1">
-                            <div className="flex flex-wrap items-center justify-between gap-2">
-                              <div className="flex items-center gap-2">
-                                <span className="text-xs font-black text-primary-400 font-mono">
-                                  E{ep.episode_number}
-                                </span>
-                                <h4 className="text-xs sm:text-sm font-bold text-white line-clamp-1">
-                                  {ep.name}
-                                </h4>
+                            <div className="flex-1 min-w-0 space-y-1">
+                              <div className="flex flex-wrap items-center justify-between gap-2">
+                                <div className="flex items-center gap-2">
+                                  <span className="text-xs font-black text-primary-400 font-mono">
+                                    E{ep.episode_number}
+                                  </span>
+                                  <h4 className="text-xs sm:text-sm font-bold text-white line-clamp-1">
+                                    {ep.name}
+                                  </h4>
+                                </div>
+
+                                <div className="flex items-center gap-2 text-[11px] text-slate-400">
+                                  {ep.air_date && (
+                                    <span className="flex items-center gap-1">
+                                      <Calendar className="w-3 h-3 text-slate-500" />
+                                      <span>{new Date(ep.air_date).toLocaleDateString('fr-FR')}</span>
+                                    </span>
+                                  )}
+                                  {ep.runtime && (
+                                    <span className="flex items-center gap-1">
+                                      <Clock className="w-3 h-3 text-slate-500" />
+                                      <span>{ep.runtime} min</span>
+                                    </span>
+                                  )}
+                                  <button
+                                    type="button"
+                                    onClick={() => handleToggleEpisodeWatched(ep)}
+                                    className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-bold transition-all ${
+                                      isEpWatched
+                                        ? 'bg-emerald-500 text-white shadow'
+                                        : 'bg-dark-800 hover:bg-emerald-600 text-slate-300 hover:text-white border border-white/10'
+                                    }`}
+                                    title={isEpWatched ? 'Épisode vu (cliquer pour décocher)' : 'Marquer cet épisode comme vu'}
+                                  >
+                                    <Check className="w-3.5 h-3.5" />
+                                    <span>{isEpWatched ? 'Vu' : 'Marquer vu'}</span>
+                                  </button>
+                                </div>
                               </div>
 
-                              <div className="flex items-center gap-2 text-[11px] text-slate-400">
-                                {ep.air_date && (
-                                  <span className="flex items-center gap-1">
-                                    <Calendar className="w-3 h-3 text-slate-500" />
-                                    <span>{new Date(ep.air_date).toLocaleDateString('fr-FR')}</span>
-                                  </span>
-                                )}
-                                {ep.runtime && (
-                                  <span className="flex items-center gap-1">
-                                    <Clock className="w-3 h-3 text-slate-500" />
-                                    <span>{ep.runtime} min</span>
-                                  </span>
-                                )}
-                              </div>
+                              <p className="text-xs text-slate-400 line-clamp-2 leading-relaxed">
+                                {ep.overview || 'Aucun synopsis disponible pour cet épisode.'}
+                              </p>
                             </div>
-
-                            <p className="text-xs text-slate-400 line-clamp-2 leading-relaxed">
-                              {ep.overview || 'Aucun synopsis disponible pour cet épisode.'}
-                            </p>
                           </div>
-                        </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   ) : (
                     <div className="p-6 text-center text-xs text-slate-500 bg-dark-850/40 rounded-xl border border-white/5">

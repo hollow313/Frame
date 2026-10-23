@@ -21,7 +21,7 @@ const AppContent: React.FC = () => {
   const [currentTab, setCurrentTab] = useState<string>('dashboard');
 
   // Modals state
-  const [selectedMedia, setSelectedMedia] = useState<{ type: 'movie' | 'tv'; id: number } | null>(null);
+  const [selectedMedia, setSelectedMedia] = useState<{ type: 'movie' | 'tv' | 'manga'; id: number } | null>(null);
   const [ratingMedia, setRatingMedia] = useState<MediaItem | null>(null);
   const [searchOpen, setSearchOpen] = useState<boolean>(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);

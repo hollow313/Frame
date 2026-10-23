@@ -1,18 +1,19 @@
-import crypto from 'node:crypto';
-import { getSetting } from './settingsService.js';
+import crypto from 'crypto';
 import db from '../db/index.js';
+import { getSetting, setSetting } from './settingsService.js';
+import { TMDBService, hasCjkCharacters } from './tmdbService.js';
+import { normalizeIsoDate } from '../utils/validate.js';
+import { logger } from '../utils/logger.js';
 
 const SIMKL_API_BASE = 'https://api.simkl.com';
 
 export class SimklService {
-  public static getClientId(override?: string): string {
-    const val = override || getSetting('SIMKL_CLIENT_ID') || '';
-    return val.trim();
+  public static getClientId(customClientId?: string): string {
+    return (customClientId || getSetting('SIMKL_CLIENT_ID')).trim();
   }
 
-  public static getClientSecret(override?: string): string {
-    const val = override || getSetting('SIMKL_CLIENT_SECRET') || '';
-    return val.trim();
+  public static getClientSecret(customSecret?: string): string {
+    return (customSecret || getSetting('SIMKL_CLIENT_SECRET')).trim();
   }
 
   public static isConfigured(): boolean {
@@ -20,583 +21,722 @@ export class SimklService {
   }
 
   /**
-   * Initialiser le flux OAuth 2.0 PKCE (S256)
+   * Générer une paire PKCE (code_verifier & code_challenge S256) pour OAuth 2.0 V2 Simkl
    */
-  public static initOAuth2(params: {
-    clientId?: string;
+  public static generatePkcePair(): { codeVerifier: string; codeChallenge: string } {
+    const codeVerifier = crypto.randomBytes(32).toString('base64url');
+    const codeChallenge = crypto.createHash('sha256').update(codeVerifier).digest('base64url');
+    return { codeVerifier, codeChallenge };
+  }
+
+  /**
+   * Construire l'URL d'autorisation OAuth 2.0 Simkl (avec PKCE S256)
+   */
+  public static buildAuthorizationUrl(params: {
+    clientId: string;
+    redirectUri: string;
+    state: string;
+    codeChallenge: string;
+  }): string {
+    const url = new URL('https://simkl.com/oauth/authorize');
+    url.searchParams.set('response_type', 'code');
+    url.searchParams.set('client_id', params.clientId.trim());
+    url.searchParams.set('redirect_uri', params.redirectUri.trim());
+    url.searchParams.set('state', params.state);
+    url.searchParams.set('code_challenge', params.codeChallenge);
+    url.searchParams.set('code_challenge_method', 'S256');
+    return url.toString();
+  }
+
+  /**
+   * Échanger le code d'autorisation OAuth contre un access_token (supporte V2 PKCE + Client Secret)
+   */
+  public static async exchangeCodeForToken(params: {
+    code: string;
+    clientId: string;
     clientSecret?: string;
     redirectUri: string;
-  }): {
-    authUrl: string;
-    state: string;
-    codeVerifier: string;
-  } {
-    const clientId = this.getClientId(params.clientId);
-    if (!clientId) {
+    codeVerifier?: string;
+  }): Promise<{ accessToken: string; refreshToken?: string }> {
+    const cleanClientId = params.clientId.trim();
+    const cleanSecret = params.clientSecret ? params.clientSecret.trim() : this.getClientSecret();
+
+    const bodyPayload: Record<string, string> = {
+      code: params.code.trim(),
+      client_id: cleanClientId,
+      redirect_uri: params.redirectUri.trim(),
+      grant_type: 'authorization_code',
+    };
+
+    if (cleanSecret) {
+      bodyPayload.client_secret = cleanSecret;
+    }
+    if (params.codeVerifier) {
+      bodyPayload.code_verifier = params.codeVerifier.trim();
+    }
+
+    const res = await fetch(`${SIMKL_API_BASE}/oauth/token`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+        'simkl-api-key': cleanClientId,
+      },
+      body: JSON.stringify(bodyPayload),
+      signal: AbortSignal.timeout(10000),
+    });
+
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.access_token) {
       throw new Error(
-        'Client ID Simkl manquant. Veuillez saisir votre Client ID Simkl (obtenu sur https://simkl.com/settings/developer/new).'
+        data.error_description ||
+          data.error ||
+          `Échec de l'échange OAuth Simkl (${res.status}). Vérifiez que le Redirect URI correspond exactement à celui configuré dans votre application Simkl.`
       );
     }
 
-    // Générer PKCE code_verifier (43-128 caractères base64url)
-    const codeVerifier = crypto.randomBytes(32).toString('base64url');
-    // Calculer SHA-256 code_challenge
-    const codeChallenge = crypto.createHash('sha256').update(codeVerifier).digest('base64url');
-    // État CSRF aléatoire
-    const state = crypto.randomBytes(16).toString('hex');
-
-    const authUrl = new URL('https://simkl.com/oauth2/authorize');
-    authUrl.searchParams.set('client_id', clientId);
-    authUrl.searchParams.set('redirect_uri', params.redirectUri);
-    authUrl.searchParams.set('response_type', 'code');
-    authUrl.searchParams.set('code_challenge', codeChallenge);
-    authUrl.searchParams.set('code_challenge_method', 'S256');
-    authUrl.searchParams.set('state', state);
-
     return {
-      authUrl: authUrl.toString(),
-      state,
-      codeVerifier,
+      accessToken: data.access_token,
+      refreshToken: data.refresh_token,
     };
   }
 
   /**
-   * Échanger le code d'autorisation OAuth 2.0 contre un jeton d'accès (access token)
+   * Rafraîchir automatiquement le jeton OAuth2 Simkl via refresh_token (B-04)
    */
-  public static async exchangeOAuth2Code(params: {
-    code: string;
-    codeVerifier: string;
-    redirectUri: string;
-    clientId?: string;
-    clientSecret?: string;
-  }): Promise<{
-    access_token: string;
-    refresh_token?: string;
-    expires_in?: number;
-    token_type: string;
-  }> {
-    const clientId = this.getClientId(params.clientId);
-    const clientSecret = this.getClientSecret(params.clientSecret);
+  public static async refreshAccessToken(userId: number): Promise<string | null> {
+    const userRow = db
+      .prepare('SELECT simkl_refresh_token, simkl_client_id, simkl_client_secret FROM users WHERE id = ?')
+      .get(userId) as
+      | { simkl_refresh_token?: string; simkl_client_id?: string; simkl_client_secret?: string }
+      | undefined;
 
-    if (!clientId) {
-      throw new Error('Client ID Simkl manquant pour l\'échange du code.');
-    }
+    const refreshToken = userRow?.simkl_refresh_token;
+    if (!refreshToken) return null;
 
-    const bodyParams = new URLSearchParams({
-      grant_type: 'authorization_code',
-      client_id: clientId,
-      code: params.code,
-      code_verifier: params.codeVerifier,
-      redirect_uri: params.redirectUri,
-    });
+    const clientId = this.getClientId(userRow?.simkl_client_id);
+    const clientSecret = this.getClientSecret(userRow?.simkl_client_secret);
+    if (!clientId) return null;
 
-    if (clientSecret) {
-      bodyParams.append('client_secret', clientSecret);
-    }
-
-    const res = await fetch(`${SIMKL_API_BASE}/oauth2/token`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/x-www-form-urlencoded',
-        'User-Agent': 'Frame/1.0',
-      },
-      body: bodyParams.toString(),
-    });
-
-    if (!res.ok) {
-      let errText = res.statusText;
-      try {
-        const errJson = (await res.json()) as any;
-        errText = errJson.error_description || errJson.message || errJson.error || errText;
-      } catch {
-        const raw = await res.text().catch(() => '');
-        if (raw) errText = raw;
+    try {
+      const payload: Record<string, string> = {
+        grant_type: 'refresh_token',
+        refresh_token: refreshToken,
+        client_id: clientId,
+      };
+      if (clientSecret) {
+        payload.client_secret = clientSecret;
       }
-      throw new Error(`Échec échange OAuth Simkl (${res.status}): ${errText}`);
-    }
 
-    const data = (await res.json()) as any;
-    return {
-      access_token: data.access_token,
-      refresh_token: data.refresh_token,
-      expires_in: data.expires_in,
-      token_type: data.token_type || 'Bearer',
-    };
+      const res = await fetch(`${SIMKL_API_BASE}/oauth/token`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+          'simkl-api-key': clientId,
+        },
+        body: JSON.stringify(payload),
+        signal: AbortSignal.timeout(10000),
+      });
+
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.access_token) {
+        logger.warn('Simkl', 'Échec du rafraîchissement du token OAuth Simkl', {
+          userId,
+          status: res.status,
+        });
+        return null;
+      }
+
+      db.prepare(
+        'UPDATE users SET simkl_token = ?, simkl_refresh_token = COALESCE(?, simkl_refresh_token) WHERE id = ?'
+      ).run(data.access_token, data.refresh_token || null, userId);
+
+      logger.info('Simkl', 'Token OAuth Simkl rafraîchi avec succès', { userId });
+      return data.access_token as string;
+    } catch (e) {
+      logger.warn('Simkl', 'Erreur réseau lors du refresh token Simkl', { userId, error: String(e) });
+      return null;
+    }
   }
 
   /**
-   * Démarrer le flux PIN (tente Auth V2 Device Flow, avec fallback Auth V1)
+   * Démarrer un flux d'authentification par code PIN / Device Code Simkl (compatible V1 et V2)
    */
-  public static async getPin(
-    clientIdOverride?: string,
-    clientSecretOverride?: string
-  ): Promise<{
+  public static async getDevicePin(customClientId?: string, customClientSecret?: string): Promise<{
     user_code: string;
     verification_url: string;
     expires_in: number;
+    interval: number;
     client_id: string;
     device_code?: string;
     isV2?: boolean;
   }> {
-    const clientId = this.getClientId(clientIdOverride);
+    const clientId = this.getClientId(customClientId);
+    const clientSecret = this.getClientSecret(customClientSecret);
+
     if (!clientId) {
-      throw new Error(
-        'Client ID Simkl manquant. Veuillez saisir votre Client ID Simkl (obtenu sur https://simkl.com/settings/developer/new).'
-      );
+      throw new Error('Veuillez saisir votre Client ID Simkl avant de générer le code PIN.');
     }
 
-    // 1. Essayer le Device Flow V2 de Simkl (POST /oauth2/device)
+    if (!getSetting('SIMKL_CLIENT_ID') && customClientId) {
+      setSetting('SIMKL_CLIENT_ID', clientId);
+    }
+    if (!getSetting('SIMKL_CLIENT_SECRET') && clientSecret) {
+      setSetting('SIMKL_CLIENT_SECRET', clientSecret);
+    }
+
     try {
-      const v2Res = await fetch(`${SIMKL_API_BASE}/oauth2/device`, {
+      const v2Res = await fetch(`${SIMKL_API_BASE}/oauth/device`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'User-Agent': 'Frame/1.0',
+          'Accept': 'application/json',
+          'simkl-api-key': clientId,
         },
-        body: JSON.stringify({
-          client_id: clientId,
-          scope: 'media:read media:write',
-        }),
+        body: JSON.stringify({ client_id: clientId }),
+        signal: AbortSignal.timeout(8000),
       });
 
       if (v2Res.ok) {
-        const v2Data = (await v2Res.json()) as any;
-        return {
-          user_code: v2Data.user_code,
-          verification_url: v2Data.verification_uri_complete || `https://simkl.com/pin?user_code=${v2Data.user_code}`,
-          expires_in: v2Data.expires_in || 900,
-          client_id: clientId,
-          device_code: v2Data.device_code,
-          isV2: true,
-        };
+        const v2Data = await v2Res.json();
+        if (v2Data.user_code) {
+          return {
+            user_code: v2Data.user_code,
+            device_code: v2Data.device_code,
+            verification_url: v2Data.verification_uri || v2Data.verification_url || 'https://simkl.com/pin',
+            expires_in: v2Data.expires_in || 900,
+            interval: v2Data.interval || 5,
+            client_id: clientId,
+            isV2: true,
+          };
+        }
       }
     } catch {
-      // Continuer vers le fallback V1
+      // Fallback sur l'endpoint V1
     }
 
-    // 2. Fallback: flux PIN legacy V1 (GET /oauth/pin)
-    try {
-      const res = await fetch(`${SIMKL_API_BASE}/oauth/pin?client_id=${encodeURIComponent(clientId)}`);
-      if (!res.ok) {
-        let errorDetail = res.statusText;
-        try {
-          const errData = (await res.json()) as any;
-          if (errData.error === 'client_id_failed' || errData.message?.includes('client_id')) {
-            errorDetail =
-              'Client ID non reconnu par Simkl. Vérifiez que vous avez bien copié le Client ID depuis votre compte Simkl Developer.';
-          } else if (errData.message || errData.error) {
-            errorDetail = errData.message || errData.error;
-          }
-        } catch {
-          const text = await res.text().catch(() => '');
-          if (text) errorDetail = text;
-        }
-        throw new Error(`Erreur Simkl (${res.status}): ${errorDetail}`);
-      }
+    const res = await fetch(`${SIMKL_API_BASE}/oauth/pin?client_id=${encodeURIComponent(clientId)}`, {
+      headers: {
+        'Content-Type': 'application/json',
+        'simkl-api-key': clientId,
+      },
+      signal: AbortSignal.timeout(8000),
+    });
 
-      const data = (await res.json()) as any;
-      return {
-        user_code: data.user_code,
-        verification_url: data.verification_url || `https://simkl.com/pin?${data.user_code}`,
-        expires_in: data.expires_in || 900,
-        client_id: clientId,
-        isV2: false,
-      };
-    } catch (e: any) {
-      if (e.message && (e.message.startsWith('Erreur Simkl') || e.message.includes('Client ID'))) {
-        throw e;
-      }
-      throw new Error(`Impossible de contacter l'API Simkl : ${e.message}`);
+    if (!res.ok) {
+      throw new Error(
+        `Simkl a refusé le Client ID (${res.status}). Vérifiez que vous avez bien copié le Client ID (et non le Secret) depuis simkl.com/settings/developer.`
+      );
     }
+
+    const data = await res.json();
+    return {
+      user_code: data.user_code,
+      verification_url: data.verification_url || 'https://simkl.com/pin',
+      expires_in: data.expires_in || 900,
+      interval: data.interval || 5,
+      client_id: clientId,
+      isV2: false,
+    };
   }
 
   /**
-   * Vérifier si l'utilisateur a validé le code PIN sur Simkl (compatible V2 et V1)
+   * Vérifier si l'utilisateur a validé le code PIN sur Simkl (supporte V1 et V2)
    */
-  public static async checkPin(
+  public static async checkDevicePin(
     userCode: string,
-    clientIdOverride?: string,
+    customClientId?: string,
     deviceCode?: string,
-    clientSecretOverride?: string
-  ): Promise<{ authorized: boolean; access_token?: string; refresh_token?: string; message?: string }> {
-    const clientId = this.getClientId(clientIdOverride);
-    const clientSecret = this.getClientSecret(clientSecretOverride);
+    customClientSecret?: string
+  ): Promise<{ result: 'OK' | 'KO'; access_token?: string; refresh_token?: string; message?: string }> {
+    const clientId = this.getClientId(customClientId);
+    const clientSecret = this.getClientSecret(customClientSecret);
     if (!clientId) {
-      return { authorized: false, message: 'Client ID Simkl non spécifié.' };
+      throw new Error('SIMKL_CLIENT_ID non configuré.');
     }
 
-    // 1. Si on a un device_code V2, sonder POST /oauth2/token
     if (deviceCode) {
       try {
-        const bodyParams = new URLSearchParams({
-          grant_type: 'urn:ietf:params:oauth:grant-type:device_code',
+        const payload: Record<string, string> = {
           client_id: clientId,
           device_code: deviceCode,
-        });
+          grant_type: 'urn:ietf:params:oauth:grant-type:device_code',
+        };
         if (clientSecret) {
-          bodyParams.append('client_secret', clientSecret);
+          payload.client_secret = clientSecret;
         }
 
-        const res = await fetch(`${SIMKL_API_BASE}/oauth2/token`, {
+        const v2Res = await fetch(`${SIMKL_API_BASE}/oauth/token`, {
           method: 'POST',
           headers: {
-            'Content-Type': 'application/x-www-form-urlencoded',
-            'User-Agent': 'Frame/1.0',
+            'Content-Type': 'application/json',
+            'Accept': 'application/json',
+            'simkl-api-key': clientId,
           },
-          body: bodyParams.toString(),
+          body: JSON.stringify(payload),
+          signal: AbortSignal.timeout(8000),
         });
 
-        if (res.ok) {
-          const data = (await res.json()) as any;
-          if (data.access_token) {
-            return {
-              authorized: true,
-              access_token: data.access_token,
-              refresh_token: data.refresh_token,
-            };
-          }
+        const v2Data = await v2Res.json().catch(() => ({}));
+        if (v2Res.ok && v2Data.access_token) {
+          return {
+            result: 'OK',
+            access_token: v2Data.access_token,
+            refresh_token: v2Data.refresh_token,
+          };
         }
-
-        const errData = (await res.json().catch(() => ({}))) as any;
-        const errType = errData.error || '';
-        if (errType === 'authorization_pending') {
-          return { authorized: false, message: 'En attente de validation sur le site Simkl...' };
-        }
-        if (errType === 'slow_down') {
-          return { authorized: false, message: 'Vérification en cours, veuillez patienter quelques secondes...' };
-        }
-        if (errType === 'expired_token') {
-          return { authorized: false, message: 'Code expiré. Veuillez relancer la génération du code PIN.' };
-        }
-      } catch (err: any) {
-        // Fallback V1
+      } catch {
+        // Fallback sur la vérification V1
       }
     }
 
-    // 2. Fallback V1: GET /oauth/pin/{userCode}
-    try {
-      const res = await fetch(
-        `${SIMKL_API_BASE}/oauth/pin/${encodeURIComponent(userCode)}?client_id=${encodeURIComponent(clientId)}`
-      );
-      if (!res.ok) {
-        const text = await res.text().catch(() => '');
-        return {
-          authorized: false,
-          message: `Code en attente ou expiré (${res.status}: ${text || 'non autorisé'}).`,
-        };
-      }
-      const data = (await res.json()) as any;
-      if (data.result === 'OK' && data.access_token) {
-        return { authorized: true, access_token: data.access_token };
-      }
-      return { authorized: false, message: data.message || 'En attente de validation sur le site Simkl...' };
-    } catch (e: any) {
-      return { authorized: false, message: e.message };
-    }
-  }
-
-  /**
-   * Tester la validité d'un token Simkl
-   */
-  public static async testToken(
-    accessToken: string,
-    clientIdOverride?: string
-  ): Promise<{ success: boolean; user?: any; message: string }> {
-    const token = accessToken.trim();
-    if (!token) {
-      return { success: false, message: 'Jeton d\'accès vide.' };
-    }
-
-    // Détection d'erreur fréquente : l'utilisateur a collé son Client Secret (simkl_cs_...) au lieu d'un Access Token
-    if (token.startsWith('simkl_cs_')) {
-      return {
-        success: false,
-        message:
-          "La valeur saisie commence par 'simkl_cs_' : il s'agit d'un Client Secret et non d'un Jeton d'accès (Access Token). Utilisez le bouton 'Se connecter avec Simkl (OAuth 2.0)' ci-dessus pour vous connecter facilement !",
-      };
-    }
-
-    const clientId = this.getClientId(clientIdOverride);
-
-    try {
-      const headers: Record<string, string> = {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${token}`,
-        'User-Agent': 'Frame/1.0',
-      };
-      if (clientId) {
-        headers['simkl-api-key'] = clientId;
-      }
-
-      const res = await fetch(`${SIMKL_API_BASE}/users/settings`, { headers });
-      if (!res.ok) {
-        let errDetail = res.statusText;
-        try {
-          const errData = (await res.json()) as any;
-          if (errData.error === 'user_token_failed') {
-            errDetail = 'Jeton d\'accès invalide ou expiré.';
-          } else if (errData.message || errData.error) {
-            errDetail = errData.message || errData.error;
-          }
-        } catch {}
-        return { success: false, message: `Erreur Simkl (${res.status}): ${errDetail}` };
-      }
-
-      const data = (await res.json()) as any;
-      return {
-        success: true,
-        user: data.user,
-        message: `Connecté à Simkl en tant que ${data.user?.name || 'utilisateur'} !`,
-      };
-    } catch (e: any) {
-      return { success: false, message: e.message || 'Erreur lors du test Simkl' };
-    }
-  }
-
-  /**
-   * Récupérer les films et séries déjà vus depuis Simkl
-   */
-  public static async getWatchedFromSimkl(
-    accessToken: string,
-    type: 'movies' | 'shows' | 'anime' = 'movies',
-    clientIdOverride?: string
-  ): Promise<any[]> {
-    const clientId = this.getClientId(clientIdOverride);
-    if (!accessToken) return [];
-
-    try {
-      const headers: Record<string, string> = {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${accessToken.trim()}`,
-        'User-Agent': 'Frame/1.0',
-      };
-      if (clientId) {
-        headers['simkl-api-key'] = clientId;
-      }
-
-      // Fetch completed items
-      const resCompleted = await fetch(`${SIMKL_API_BASE}/sync/all-items/${type}/completed`, { headers });
-      const dataCompleted = resCompleted.ok ? ((await resCompleted.json()) as any) : {};
-      const completedList = ((dataCompleted[type] || []) as any[]).map((item) => ({ ...item, simkl_status: 'completed' }));
-
-      // Also fetch watching items (for TV shows and anime in-progress!)
-      let watchingList: any[] = [];
-      if (type === 'shows' || type === 'anime') {
-        const resWatching = await fetch(`${SIMKL_API_BASE}/sync/all-items/${type}/watching`, { headers });
-        const dataWatching = resWatching.ok ? ((await resWatching.json()) as any) : {};
-        watchingList = ((dataWatching[type] || []) as any[]).map((item) => ({ ...item, simkl_status: 'watching' }));
-      }
-
-      return [...completedList, ...watchingList];
-    } catch {
-      return [];
-    }
-  }
-
-  /**
-   * Récupérer les statistiques authentiques depuis Simkl (/users/me/stats ou /users/{id}/stats)
-   */
-  public static async getSimklStats(
-    accessToken: string,
-    clientIdOverride?: string,
-    simklUserId?: string
-  ): Promise<any> {
-    const clientId = this.getClientId(clientIdOverride);
-    if (!accessToken) return null;
-
-    const headers: Record<string, string> = {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${accessToken.trim()}`,
-      'User-Agent': 'Frame/1.0',
-    };
-    if (clientId) {
-      headers['simkl-api-key'] = clientId;
-    }
-
-    const endpoints = [
-      simklUserId ? `${SIMKL_API_BASE}/users/${simklUserId}/stats` : null,
-      `${SIMKL_API_BASE}/users/me/stats`,
-    ].filter(Boolean) as string[];
-
-    for (const ep of endpoints) {
-      try {
-        const res = await fetch(ep, { headers });
-        if (res.ok) {
-          const data = await res.json();
-          if (data && (data.total_mins || data.tv || data.movies || data.anime || data.watched_time || data.stats || data.summary)) {
-            return data;
-          }
-        }
-      } catch {}
-    }
-    return null;
-  }
-
-  /**
-   * Envoyer un item vu vers Simkl
-   */
-  public static async markAsWatchedOnSimkl(params: {
-    accessToken: string;
-    mediaType: 'movie' | 'tv';
-    tmdbId?: number;
-    title: string;
-    year?: number;
-    clientIdOverride?: string;
-  }): Promise<boolean> {
-    const clientId = this.getClientId(params.clientIdOverride);
-    if (!params.accessToken) return false;
-
-    try {
-      const body: any = {};
-      const key = params.mediaType === 'movie' ? 'movies' : 'shows';
-      body[key] = [
-        {
-          title: params.title,
-          ...(params.year ? { year: params.year } : {}),
-          ids: {
-            ...(params.tmdbId ? { tmdb: params.tmdbId.toString() } : {}),
-          },
+    const res = await fetch(
+      `${SIMKL_API_BASE}/oauth/pin/${encodeURIComponent(userCode.trim())}?client_id=${encodeURIComponent(clientId)}`,
+      {
+        headers: {
+          'Content-Type': 'application/json',
+          'simkl-api-key': clientId,
         },
-      ];
-
-      const headers: Record<string, string> = {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${params.accessToken}`,
-        'User-Agent': 'Frame/1.0',
-      };
-      if (clientId) {
-        headers['simkl-api-key'] = clientId;
+        signal: AbortSignal.timeout(8000),
       }
+    );
 
-      const res = await fetch(`${SIMKL_API_BASE}/sync/history`, {
+    const data = await res.json().catch(() => ({}));
+    if (data.result === 'OK' && data.access_token) {
+      return { result: 'OK', access_token: data.access_token };
+    }
+
+    return {
+      result: 'KO',
+      message: data.message || 'En attente de validation du code sur https://simkl.com/pin',
+    };
+  }
+
+  /**
+   * Tester un jeton d'accès Simkl et récupérer les infos du compte utilisateur Simkl
+   */
+  public static async validateAccessToken(accessToken: string, customClientId?: string): Promise<{ valid: boolean; accountId?: string; name?: string; error?: string }> {
+    const cleanToken = accessToken.trim();
+
+    if (cleanToken.startsWith('simkl_cs_')) {
+      return {
+        valid: false,
+        error: "Vous avez collé votre 'Client Secret' (simkl_cs_...) au lieu d'un Access Token ! Utilisez le bouton « Se connecter avec Simkl (OAuth 2.0) » ci-dessus.",
+      };
+    }
+
+    const clientId = this.getClientId(customClientId);
+    if (!clientId) {
+      return { valid: false, error: 'Veuillez renseigner votre Client ID Simkl.' };
+    }
+
+    try {
+      const res = await fetch(`${SIMKL_API_BASE}/users/settings`, {
         method: 'POST',
-        headers,
-        body: JSON.stringify(body),
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${cleanToken}`,
+          'simkl-api-key': clientId,
+        },
+        signal: AbortSignal.timeout(8000),
       });
 
-      return res.ok;
-    } catch {
-      return false;
+      if (!res.ok) {
+        return {
+          valid: false,
+          error: `Jeton refusé par Simkl (${res.status}). Vérifiez que le jeton correspond bien à votre Client ID.`,
+        };
+      }
+
+      const data = await res.json();
+      return {
+        valid: true,
+        accountId: data.account?.id ? String(data.account.id) : undefined,
+        name: data.user?.name || 'Utilisateur Simkl',
+      };
+    } catch (err: any) {
+      return { valid: false, error: err.message || 'Impossible de joindre Simkl.' };
     }
   }
 
   /**
-   * Synchroniser tous les éléments Simkl (Films, Séries, Animés / Mangas) vers Frame pour un utilisateur
+   * Synchroniser tous les médias vus et la liste à voir depuis Simkl vers SQLite pour un utilisateur donné
+   * Inclut :
+   * - U-02 : Séparation stricte des Mangas (`media_type = 'manga'`) et des Séries TV (`media_type = 'tv'`)
+   * - U-03 : Dates normalisées en ISO-8601 UTC + préservation de `watched_at` au conflit
+   * - U-04 & B-04 : Support du `refresh_token` en cas de 401/403 et mise à jour du statut de synchronisation
+   * - U-05 : Traduction des titres CJK si la clé TMDB est configurée
    */
-  public static async syncSimklToFrame(
-    userId: number,
-    accessToken: string,
-    clientIdOverride?: string
-  ): Promise<{ importedMovies: number; importedShows: number; importedAnime: number; simklStats?: any }> {
-    const movies = await this.getWatchedFromSimkl(accessToken, 'movies', clientIdOverride);
-    const shows = await this.getWatchedFromSimkl(accessToken, 'shows', clientIdOverride);
-    const animes = await this.getWatchedFromSimkl(accessToken, 'anime', clientIdOverride);
+  public static async syncWatchedItems(userId: number): Promise<{
+    importedMovies: number;
+    importedShows: number;
+    importedAnime: number;
+    importedManga: number;
+    importedWatchlist: number;
+  }> {
+    const userRow = db
+      .prepare('SELECT simkl_token, simkl_client_id, simkl_user_id FROM users WHERE id = ?')
+      .get(userId) as { simkl_token?: string; simkl_client_id?: string; simkl_user_id?: string } | undefined;
 
-    // Récupérer et mettre en cache les statistiques officielles Simkl
-    const userRow = db.prepare('SELECT simkl_user_id FROM users WHERE id = ?').get(userId) as any;
-    const simklStats = await this.getSimklStats(accessToken, clientIdOverride, userRow?.simkl_user_id);
-    if (simklStats) {
-      try {
-        db.prepare('UPDATE users SET simkl_stats_json = ? WHERE id = ?').run(JSON.stringify(simklStats), userId);
-      } catch {}
+    let token = userRow?.simkl_token || getSetting('SIMKL_ACCESS_TOKEN');
+    const clientId = this.getClientId(userRow?.simkl_client_id);
+
+    if (!clientId || !token) {
+      throw new Error("Compte Simkl non lié ou Client ID manquant. Rendez-vous dans vos Paramètres.");
+    }
+
+    const performFetchAllItems = async (bearerToken: string) =>
+      fetch(`${SIMKL_API_BASE}/sync/all-items/?extended=full&episode_watched_at=yes`, {
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${bearerToken}`,
+          'simkl-api-key': clientId,
+        },
+        signal: AbortSignal.timeout(25000),
+      });
+
+    let res = await performFetchAllItems(token);
+
+    // Si le jeton a expiré (401/403), tenter un refresh_token automatique (B-04)
+    if (res.status === 401 || res.status === 403) {
+      const refreshed = await this.refreshAccessToken(userId);
+      if (refreshed) {
+        token = refreshed;
+        res = await performFetchAllItems(token);
+      }
+    }
+
+    if (!res.ok) {
+      const errMsg = `Erreur de synchronisation Simkl (${res.status})`;
+      db.prepare(
+        'UPDATE users SET simkl_last_sync_at = ?, simkl_last_sync_status = ?, simkl_last_sync_error = ? WHERE id = ?'
+      ).run(new Date().toISOString(), 'error', errMsg, userId);
+      throw new Error(errMsg);
+    }
+
+    const data = await res.json();
+
+    // Récupérer les vraies statistiques de temps de visionnage depuis l'API Simkl (/users/{id}/stats)
+    try {
+      let accountId = userRow?.simkl_user_id;
+      if (!accountId) {
+        const settingsRes = await fetch(`${SIMKL_API_BASE}/users/settings`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+            'simkl-api-key': clientId,
+          },
+          signal: AbortSignal.timeout(8000),
+        });
+        if (settingsRes.ok) {
+          const settingsData = await settingsRes.json();
+          if (settingsData.account?.id) {
+            accountId = String(settingsData.account.id);
+            db.prepare('UPDATE users SET simkl_user_id = ? WHERE id = ?').run(accountId, userId);
+          }
+        }
+      }
+
+      if (accountId) {
+        const statsRes = await fetch(`${SIMKL_API_BASE}/users/${accountId}/stats`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+            'simkl-api-key': clientId,
+          },
+          signal: AbortSignal.timeout(8000),
+        });
+        if (statsRes.ok) {
+          const statsData = await statsRes.json();
+          db.prepare('UPDATE users SET simkl_stats_json = ? WHERE id = ?').run(
+            JSON.stringify(statsData),
+            userId
+          );
+        }
+      }
+    } catch (e) {
+      logger.warn('Simkl', 'Impossible de récupérer /users/stats', { userId, error: String(e) });
     }
 
     let importedMovies = 0;
     let importedShows = 0;
     let importedAnime = 0;
+    let importedManga = 0;
+    let importedWatchlist = 0;
 
-    const insertStmt = db.prepare(`
-      INSERT INTO watched_items (
-        user_id, tmdb_id, media_type, title, poster_path, release_date, watched_at, synced_simkl, episodes_watched, runtime_minutes, genres
-      )
-      VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)
+    const insertWatchedStmt = db.prepare(`
+      INSERT INTO watched_items (user_id, tmdb_id, media_type, title, release_date, rating, watched_at, genres, runtime, season_number, episode_number)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(user_id, tmdb_id, media_type, season_number, episode_number) DO UPDATE SET
-        synced_simkl = 1,
-        episodes_watched = excluded.episodes_watched,
-        runtime_minutes = excluded.runtime_minutes,
-        genres = COALESCE(excluded.genres, watched_items.genres)
+        rating = COALESCE(excluded.rating, watched_items.rating),
+        watched_at = COALESCE(watched_items.watched_at, excluded.watched_at),
+        genres = COALESCE(watched_items.genres, excluded.genres),
+        runtime = CASE WHEN watched_items.runtime > 0 THEN watched_items.runtime ELSE excluded.runtime END
     `);
 
-    // 1. Insérer les films
-    for (const m of movies) {
-      const tmdbId = m.movie?.ids?.tmdb ? parseInt(m.movie.ids.tmdb, 10) : null;
-      if (tmdbId) {
-        try {
-          const runtime = m.movie?.runtime || 105;
-          const genresJson = m.movie?.genres ? JSON.stringify(m.movie.genres.map((name: string) => ({ id: 0, name }))) : null;
-          insertStmt.run(
+    const insertWatchlistStmt = db.prepare(`
+      INSERT INTO watchlist (user_id, tmdb_id, media_type, title, release_date, status, genres, added_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(user_id, tmdb_id, media_type) DO UPDATE SET
+        status = excluded.status,
+        genres = COALESCE(watchlist.genres, excluded.genres)
+    `);
+
+    const extractWatchedEpisodeDates = (seasonsArr: any[]): string[] => {
+      const dates: string[] = [];
+      if (!Array.isArray(seasonsArr)) return dates;
+      for (const s of seasonsArr) {
+        if (Array.isArray(s.episodes)) {
+          for (const ep of s.episodes) {
+            if (ep.watched_at) {
+              dates.push(normalizeIsoDate(ep.watched_at));
+            }
+          }
+        }
+      }
+      return dates;
+    };
+
+    // 1. Traiter les films Simkl
+    if (Array.isArray(data.movies)) {
+      for (const m of data.movies) {
+        const tmdbId = m.movie?.ids?.tmdb ? parseInt(m.movie.ids.tmdb, 10) : null;
+        if (!tmdbId) continue;
+
+        const title = m.movie?.title || 'Film sans titre';
+        const year = m.movie?.year ? `${m.movie.year}-01-01` : null;
+        const status = m.status || 'completed';
+        const runtime = m.movie?.runtime ? Number(m.movie.runtime) : 115;
+
+        if (status === 'completed') {
+          const watchedAt = normalizeIsoDate(m.last_watched_at || m.last_watched);
+          insertWatchedStmt.run(
             userId,
             tmdbId,
             'movie',
-            m.movie.title || 'Inconnu',
-            m.movie.poster ? `https://simkl.in/posters/${m.movie.poster}_m.webp` : null,
-            m.movie.year ? `${m.movie.year}-01-01` : null,
-            m.last_watched_at || new Date().toISOString(),
-            1,
+            title,
+            year,
+            m.user_rating || null,
+            watchedAt,
+            null,
             runtime,
-            genresJson
+            0,
+            0
           );
           importedMovies++;
-        } catch {}
+        } else if (status === 'plantowatch' || status === 'watching' || status === 'hold') {
+          const mappedStatus = status === 'plantowatch' ? 'plan_to_watch' : status;
+          insertWatchlistStmt.run(userId, tmdbId, 'movie', title, year, mappedStatus, null, new Date().toISOString());
+          importedWatchlist++;
+        }
       }
     }
 
-    // 2. Insérer les séries TV
-    for (const s of shows) {
-      const tmdbId = s.show?.ids?.tmdb ? parseInt(s.show.ids.tmdb, 10) : null;
-      if (tmdbId) {
-        try {
-          const eps = s.watched_episodes_count || (s.simkl_status === 'completed' ? (s.show?.episodes_count || 12) : 1);
-          const perEpMins = s.show?.runtime || 45;
-          const totalMins = eps * perEpMins;
-          const genresJson = s.show?.genres ? JSON.stringify(s.show.genres.map((name: string) => ({ id: 0, name }))) : null;
-          insertStmt.run(
+    // 2. Traiter les séries TV Simkl (JAMAIS marquées comme animé/manga - U-02)
+    if (Array.isArray(data.shows)) {
+      for (const s of data.shows) {
+        const tmdbId = s.show?.ids?.tmdb ? parseInt(s.show.ids.tmdb, 10) : null;
+        if (!tmdbId) continue;
+
+        const title = s.show?.title || 'Série sans titre';
+        const year = s.show?.year ? `${s.show.year}-01-01` : null;
+        const status = s.status || 'completed';
+        const epRuntime = s.show?.runtime ? Number(s.show.runtime) : 45;
+        const watchedEpsCount = Number(s.watched_episodes_count) || Number(s.total_episodes_count) || 10;
+
+        if (status === 'completed' || status === 'watching' || watchedEpsCount > 0) {
+          const watchedAt = normalizeIsoDate(s.last_watched_at || s.last_watched);
+          const epDates = extractWatchedEpisodeDates(s.seasons);
+
+          if (epDates.length > 0 && Array.isArray(s.seasons)) {
+            for (const seasonObj of s.seasons) {
+              const sNum = Number(seasonObj.number) || 1;
+              if (Array.isArray(seasonObj.episodes)) {
+                for (const epObj of seasonObj.episodes) {
+                  const eNum = Number(epObj.number) || 1;
+                  const epDate = normalizeIsoDate(epObj.watched_at || watchedAt);
+                  insertWatchedStmt.run(
+                    userId,
+                    tmdbId,
+                    'tv',
+                    title,
+                    year,
+                    s.user_rating || null,
+                    epDate,
+                    null,
+                    epRuntime,
+                    sNum,
+                    eNum
+                  );
+                }
+              }
+            }
+          }
+
+          const totalShowRuntime = epDates.length > 0 ? 0 : Math.max(1, watchedEpsCount) * epRuntime;
+          insertWatchedStmt.run(
             userId,
             tmdbId,
             'tv',
-            s.show.title || 'Inconnu',
-            s.show.poster ? `https://simkl.in/posters/${s.show.poster}_m.webp` : null,
-            s.show.year ? `${s.show.year}-01-01` : null,
-            s.last_watched_at || new Date().toISOString(),
-            eps,
-            totalMins,
-            genresJson
+            title,
+            year,
+            s.user_rating || null,
+            watchedAt,
+            null,
+            totalShowRuntime,
+            0,
+            0
           );
           importedShows++;
-        } catch {}
+        }
+
+        if (status === 'plantowatch' || status === 'watching' || status === 'hold') {
+          const mappedStatus = status === 'plantowatch' ? 'plan_to_watch' : status;
+          insertWatchlistStmt.run(userId, tmdbId, 'tv', title, year, mappedStatus, null, new Date().toISOString());
+          importedWatchlist++;
+        }
       }
     }
 
-    // 3. Insérer les animés / mangas
-    for (const a of animes) {
-      const tmdbId = a.anime?.ids?.tmdb ? parseInt(a.anime.ids.tmdb, 10) : null;
-      if (tmdbId) {
-        try {
-          const eps = a.watched_episodes_count || (a.simkl_status === 'completed' ? (a.anime?.episodes_count || 12) : 1);
-          const perEpMins = a.anime?.runtime || 24;
-          const totalMins = eps * perEpMins;
-          const genres = (a.anime?.genres || []).map((name: string) => ({ id: 0, name }));
-          if (!genres.some((g: any) => g.name?.toLowerCase().includes('anim'))) {
-            genres.push({ id: 16, name: 'Animation' });
+    // 3. Traiter les Animés et Mangas Simkl (distinction stricte manga vs anime - U-02)
+    const animeGenreJson = JSON.stringify([{ id: 16, name: 'Animation' }]);
+    const mangaGenreJson = JSON.stringify([{ id: 16, name: 'Manga / Animation' }]);
+
+    const animeAndMangaList = [
+      ...(Array.isArray(data.anime) ? data.anime : []),
+      ...(Array.isArray(data.manga)
+        ? data.manga.map((mg: any) => ({ ...mg, _forceManga: true }))
+        : []),
+    ];
+
+    for (const a of animeAndMangaList) {
+      const mediaObj = a.anime || a.manga || a.show || {};
+      const rawTmdb = mediaObj.ids?.tmdb ? parseInt(mediaObj.ids.tmdb, 10) : null;
+      const malId = mediaObj.ids?.mal ? parseInt(mediaObj.ids.mal, 10) : null;
+      const simklId = mediaObj.ids?.simkl ? parseInt(mediaObj.ids.simkl, 10) : null;
+
+      const subType = String(a.anime_type || mediaObj.type || a.type || '').toLowerCase();
+      const isMangaItem =
+        Boolean(a._forceManga) ||
+        subType === 'manga' ||
+        subType === 'novel' ||
+        subType === 'manhwa' ||
+        subType === 'manhua' ||
+        subType === 'oneshot' ||
+        subType === 'doujin';
+
+      const tmdbId = rawTmdb || (isMangaItem ? malId || simklId : null);
+      if (!tmdbId) continue;
+
+      const title = mediaObj.title || (isMangaItem ? 'Manga sans titre' : 'Animé sans titre');
+      const year = mediaObj.year ? `${mediaObj.year}-01-01` : null;
+      const isMovie = !isMangaItem && subType === 'movie';
+      const mediaType: 'movie' | 'tv' | 'manga' = isMangaItem ? 'manga' : isMovie ? 'movie' : 'tv';
+      const status = a.status || 'completed';
+      const genreJson = isMangaItem ? mangaGenreJson : animeGenreJson;
+
+      // Si un manga était précédemment enregistré par erreur sous media_type='tv', le convertir en 'manga' (U-02)
+      if (isMangaItem && rawTmdb) {
+        db.prepare('DELETE FROM watched_items WHERE user_id = ? AND tmdb_id = ? AND media_type = ?').run(
+          userId,
+          rawTmdb,
+          'tv'
+        );
+        db.prepare('DELETE FROM watchlist WHERE user_id = ? AND tmdb_id = ? AND media_type = ?').run(
+          userId,
+          rawTmdb,
+          'tv'
+        );
+      }
+
+      const epRuntime = mediaObj.runtime ? Number(mediaObj.runtime) : isMovie ? 105 : 24;
+      const watchedEpsCount = Number(a.watched_episodes_count) || Number(a.total_episodes_count) || (isMovie ? 1 : 12);
+
+      if (status === 'completed' || status === 'watching' || watchedEpsCount > 0) {
+        const watchedAt = normalizeIsoDate(a.last_watched_at || a.last_watched);
+        const epDates = extractWatchedEpisodeDates(a.seasons);
+
+        if (!isMovie && !isMangaItem && epDates.length > 0 && Array.isArray(a.seasons)) {
+          for (const seasonObj of a.seasons) {
+            const sNum = Number(seasonObj.number) || 1;
+            if (Array.isArray(seasonObj.episodes)) {
+              for (const epObj of seasonObj.episodes) {
+                const eNum = Number(epObj.number) || 1;
+                const epDate = normalizeIsoDate(epObj.watched_at || watchedAt);
+                insertWatchedStmt.run(
+                  userId,
+                  tmdbId,
+                  mediaType,
+                  title,
+                  year,
+                  a.user_rating || null,
+                  epDate,
+                  genreJson,
+                  epRuntime,
+                  sNum,
+                  eNum
+                );
+              }
+            }
           }
-          const genresJson = JSON.stringify(genres);
-          insertStmt.run(
-            userId,
-            tmdbId,
-            'tv', // TMDB traite les séries animées en TV
-            a.anime.title || 'Inconnu',
-            a.anime.poster ? `https://simkl.in/posters/${a.anime.poster}_m.webp` : null,
-            a.anime.year ? `${a.anime.year}-01-01` : null,
-            a.last_watched_at || new Date().toISOString(),
-            eps,
-            totalMins,
-            genresJson
-          );
+        }
+
+        const totalAnimeRuntime =
+          !isMovie && !isMangaItem && epDates.length > 0
+            ? 0
+            : isMovie
+            ? epRuntime
+            : Math.max(1, watchedEpsCount) * epRuntime;
+
+        insertWatchedStmt.run(
+          userId,
+          tmdbId,
+          mediaType,
+          title,
+          year,
+          a.user_rating || null,
+          watchedAt,
+          genreJson,
+          totalAnimeRuntime,
+          0,
+          0
+        );
+
+        if (isMangaItem) {
+          importedManga++;
+        } else {
           importedAnime++;
-        } catch {}
+        }
+      }
+
+      if (status === 'plantowatch' || status === 'watching' || status === 'hold') {
+        const mappedStatus = status === 'plantowatch' ? 'plan_to_watch' : status;
+        insertWatchlistStmt.run(
+          userId,
+          tmdbId,
+          mediaType,
+          title,
+          year,
+          mappedStatus,
+          genreJson,
+          new Date().toISOString()
+        );
+        importedWatchlist++;
       }
     }
 
-    return { importedMovies, importedShows, importedAnime, simklStats };
+    // Enregistrer le succès de la synchronisation (U-04)
+    db.prepare(
+      'UPDATE users SET simkl_last_sync_at = ?, simkl_last_sync_status = ?, simkl_last_sync_error = NULL WHERE id = ?'
+    ).run(new Date().toISOString(), 'ok', userId);
+
+    // Enrichir en arrière-plan les titres CJK éventuels (U-05)
+    TMDBService.repairCjkTitlesInDb().catch(() => {});
+
+    return { importedMovies, importedShows, importedAnime, importedManga, importedWatchlist };
   }
 }

@@ -1,5 +1,5 @@
 import React from 'react';
-import { Star, Check, Bookmark, Plus, Film, Tv, Eye } from 'lucide-react';
+import { Star, Check, Bookmark, Plus, Film, Tv, Eye, EyeOff } from 'lucide-react';
 import { MediaItem } from '../types';
 
 interface MediaCardProps {
@@ -9,6 +9,7 @@ interface MediaCardProps {
   onToggleWatched?: (item: MediaItem) => void;
   onOpenRating?: (item: MediaItem) => void;
   onToggleWatchlist?: (item: MediaItem) => void;
+  onNotInterested?: (item: MediaItem) => void;
 }
 
 export const MediaCard: React.FC<MediaCardProps> = ({
@@ -18,6 +19,7 @@ export const MediaCard: React.FC<MediaCardProps> = ({
   onToggleWatched,
   onOpenRating,
   onToggleWatchlist,
+  onNotInterested,
 }) => {
   const handleSelect = () => {
     if (onSelect) onSelect(item);
@@ -150,6 +152,20 @@ export const MediaCard: React.FC<MediaCardProps> = ({
             >
               <Eye className="w-4 h-4" />
             </button>
+
+            {/* Not Interested */}
+            {onNotInterested && (
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onNotInterested(item);
+                }}
+                className="p-2 rounded-full bg-dark-800/90 hover:bg-rose-600 text-slate-300 hover:text-white border border-white/10 backdrop-blur-md transition-transform hover:scale-110"
+                title="Pas intéressé (masquer des recommandations)"
+              >
+                <EyeOff className="w-4 h-4" />
+              </button>
+            )}
           </div>
         </div>
       </div>
@@ -159,6 +175,11 @@ export const MediaCard: React.FC<MediaCardProps> = ({
         <h3 className="text-sm font-semibold text-slate-200 group-hover:text-primary-400 transition-colors line-clamp-1">
           {item.title}
         </h3>
+        {(item.reasons?.[0] || item.recommendationReason) && (
+          <p className="text-[10px] text-primary-300/90 line-clamp-1 font-medium">
+            {item.reasons?.[0] || item.recommendationReason}
+          </p>
+        )}
         <div className="flex items-center justify-between text-xs text-slate-400">
           <span>{year || 'Date inconnue'}</span>
           {item.genres && item.genres.length > 0 && (

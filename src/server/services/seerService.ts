@@ -64,6 +64,14 @@ export class SeerService {
     }
   }
 
+  public static async getStatus(): Promise<{ connected: boolean; version?: string; message: string }> {
+    if (!this.isConfigured()) {
+      return { connected: false, message: "Overseerr / Jellyseerr n'est pas configuré." };
+    }
+    const r = await this.testConnection();
+    return { connected: r.success, version: r.version, message: r.message };
+  }
+
   /**
    * Récupérer le statut d'un média dans Seer (disponible, en cours, etc.)
    */

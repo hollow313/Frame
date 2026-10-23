@@ -23,7 +23,18 @@ services:
       # - RADARR_API_KEY=votre_cle_api_radarr
       # - SIMKL_CLIENT_ID=votre_client_id_simkl
       # - SIMKL_CLIENT_SECRET=votre_client_secret_simkl
-      # - JWT_SECRET=changez_cette_cle_secrete_en_production
+      # - JWT_SECRET=genere_automatiquement_au_premier_demarrage
+      # - FRAME_ENCRYPTION_KEY=cle_optionnelle_aes256_pour_chiffrer_les_secrets_au_repos
+      # - CORS_ORIGINS=https://frame.mondomaine.fr
+      # - COOKIE_SECURE=false
+      # - SSO_TRUSTED_PROXIES=127.0.0.1/32,172.16.0.0/12
+      # - INTERNAL_HOSTS_ALLOWLIST=192.168.1.50,jellyfin,sonarr,radarr,overseerr
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:30018/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
     volumes:
       - ./data:/app/data
       - ./config:/app/config

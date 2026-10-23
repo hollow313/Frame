@@ -194,12 +194,12 @@ export class ArrService {
 
     const insertStmt = db.prepare(`
       INSERT INTO watched_items (
-        user_id, tmdb_id, media_type, title, poster_path, release_date, watched_at, synced_simkl, episodes_watched, runtime_minutes, genres
+        user_id, tmdb_id, media_type, title, poster_path, release_date, watched_at, runtime, genres, season_number, episode_number
       )
-      VALUES (?, ?, 'tv', ?, ?, ?, ?, 0, ?, ?, ?)
+      VALUES (?, ?, 'tv', ?, ?, ?, ?, ?, ?, 0, 0)
       ON CONFLICT(user_id, tmdb_id, media_type, season_number, episode_number) DO UPDATE SET
-        episodes_watched = excluded.episodes_watched,
-        runtime_minutes = excluded.runtime_minutes,
+        runtime = excluded.runtime,
+        watched_at = COALESCE(watched_items.watched_at, excluded.watched_at),
         genres = COALESCE(excluded.genres, watched_items.genres)
     `);
 
@@ -210,30 +210,14 @@ export class ArrService {
         const runtimePerEp = s.runtime || (isAnime ? 24 : 45);
         const totalMins = eps * runtimePerEp;
 
-        let tmdbId: number | null = null;
+        let tmdbId: number | null = s.tmdbId ? Number(s.tmdbId) : null;
         let posterPath: string | null = null;
         let releaseDate: string | null = s.year ? `${s.year}-01-01` : null;
 
-        // Tenter de trouver le TMDB ID via TVDB ID
-        if (s.tvdbId) {
-          try {
-            const tmdbFound = await TMDBService.findByTvdbId(s.tvdbId);
-            if (tmdbFound) {
-              tmdbId = tmdbFound.id;
-              if (tmdbFound.poster_path) {
-                posterPath = tmdbFound.poster_path.startsWith('http') ? tmdbFound.poster_path : `https://image.tmdb.org/t/p/w500${tmdbFound.poster_path}`;
-              }
-              if (tmdbFound.first_air_date) {
-                releaseDate = tmdbFound.first_air_date;
-              }
-            }
-          } catch {}
-        }
-
-        // Si non trouvé par TVDB, chercher par titre
+        // Si non trouvé par tmdbId direct, chercher par titre sur TMDB
         if (!tmdbId && s.title) {
           try {
-            const searchRes = await TMDBService.search(s.title, 1);
+            const searchRes = await TMDBService.searchMulti(s.title, 1);
             const foundTv = (searchRes.results || []).find((r: any) => r.media_type === 'tv') || searchRes.results?.[0];
             if (foundTv) {
               tmdbId = foundTv.id;
@@ -269,7 +253,6 @@ export class ArrService {
           posterPath,
           releaseDate,
           new Date().toISOString(),
-          eps,
           totalMins,
           JSON.stringify(genresList)
         );
@@ -291,4 +274,28 @@ export class ArrService {
       message: `Synchronisation Sonarr terminée ! ${importedAnime} animés et ${importedShows} séries non monitorés importés dans Déjà Vu.`,
     };
   }
+
+  public static async getSonarrStatus(): Promise<{ connected: boolean; version?: string; error?: string }> {
+    const r = await this.testSonarr();
+    return { connected: r.success, version: r.version, error: r.success ? undefined : r.message };
+  }
+
+  public static async getRadarrStatus(): Promise<{ connected: boolean; version?: string; error?: string }> {
+    const r = await this.testRadarr();
+    return { connected: r.success, version: r.version, error: r.success ? undefined : r.message };
+  }
+
+  public static async checkSeriesStatus(tvdbId?: number, title?: string): Promise<ArrMediaStatus> {
+    return this.checkSonarrSeries(title || '', tvdbId);
+  }
+
+  public static async checkMovieStatus(tmdbId: number): Promise<ArrMediaStatus> {
+    return this.checkRadarrMovie(tmdbId);
+  }
+
+  public static async syncUnmonitoredToWatched(userId: number) {
+    return this.syncUnmonitoredFromSonarr(userId);
+  }
 }
+
+export const SonarrService = ArrService;

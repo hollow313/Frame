@@ -64,6 +64,17 @@ export const Settings: React.FC = () => {
   const [ldapSearchFilter, setLdapSearchFilter] = useState('');
   const [ssoEnabled, setSsoEnabled] = useState(false);
   const [ssoHeader, setSsoHeader] = useState('Remote-User');
+  const [ssoTrustedProxies, setSsoTrustedProxies] = useState('');
+  const [internalHostsAllowlist, setInternalHostsAllowlist] = useState('');
+  const [configuredSecrets, setConfiguredSecrets] = useState<Record<string, boolean>>({});
+  const [simklStatusInfo, setSimklStatusInfo] = useState<{
+    connected: boolean;
+    autoSync: boolean;
+    lastSyncAt: string | null;
+    lastSyncStatus: string | null;
+    lastSyncError: string | null;
+    nextSyncAt: string | null;
+  } | null>(null);
 
   // Form states for User Simkl
   const [userSimklClientId, setUserSimklClientId] = useState('');
@@ -117,6 +128,9 @@ export const Settings: React.FC = () => {
     if (user?.simklClientSecret) {
       setUserSimklClientSecret(user.simklClientSecret);
     }
+    if (user?.simklConnected) {
+      api.getSimklStatus().then((st) => setSimklStatusInfo(st)).catch(() => {});
+    }
     if (user?.jellyfinServerUrl) {
       setUserJellyfinUrl(user.jellyfinServerUrl);
     } else {
@@ -168,31 +182,41 @@ export const Settings: React.FC = () => {
     try {
       if (isAdmin) {
         const s = await api.getSettings();
-        if (s.TMDB_API_KEY?.value) setTmdbKey(s.TMDB_API_KEY.value);
+        setConfiguredSecrets({
+          TMDB_API_KEY: Boolean(s.TMDB_API_KEY?.configured),
+          SEER_API_KEY: Boolean(s.SEER_API_KEY?.configured),
+          SONARR_API_KEY: Boolean(s.SONARR_API_KEY?.configured),
+          RADARR_API_KEY: Boolean(s.RADARR_API_KEY?.configured),
+          LDAP_BIND_PASSWORD: Boolean(s.LDAP_BIND_PASSWORD?.configured),
+        });
+        setTmdbKey('');
+        setSeerApiKey('');
+        setSonarrApiKey('');
+        setRadarrApiKey('');
+        setLdapBindPassword('');
+
         if (s.SEER_URL?.value) setSeerUrl(s.SEER_URL.value);
-        if (s.SEER_API_KEY?.value) setSeerApiKey(s.SEER_API_KEY.value);
         if (s.SEER_DEFAULT_USER_ID?.value) setSeerDefaultUserId(s.SEER_DEFAULT_USER_ID.value);
-        if (s.SEER_URL?.value && s.SEER_API_KEY?.value) {
+        if (s.SEER_URL?.value && s.SEER_API_KEY?.configured) {
           api.getSeerUsers().then((u) => setSeerUsers(u)).catch(() => {});
         }
         if (s.SONARR_URL?.value) setSonarrUrl(s.SONARR_URL.value);
-        if (s.SONARR_API_KEY?.value) setSonarrApiKey(s.SONARR_API_KEY.value);
         if (s.RADARR_URL?.value) setRadarrUrl(s.RADARR_URL.value);
-        if (s.RADARR_API_KEY?.value) setRadarrApiKey(s.RADARR_API_KEY.value);
         if (s.DEFAULT_LANGUAGE?.value) setDefaultLanguage(s.DEFAULT_LANGUAGE.value);
         if (s.SIMKL_CLIENT_ID?.value) setSimklClientId(s.SIMKL_CLIENT_ID.value);
         if (s.JELLYFIN_URL?.value) setJellyfinUrl(s.JELLYFIN_URL.value);
+        if (s.INTERNAL_HOSTS_ALLOWLIST?.value !== undefined) setInternalHostsAllowlist(s.INTERNAL_HOSTS_ALLOWLIST.value || '');
 
         setAllowRegistration(s.ALLOW_REGISTRATION?.value === 'true');
         setLdapEnabled(s.LDAP_ENABLED?.value === 'true');
         if (s.LDAP_URL?.value) setLdapUrl(s.LDAP_URL.value);
         if (s.LDAP_BASE_DN?.value) setLdapBaseDn(s.LDAP_BASE_DN.value);
         if (s.LDAP_BIND_DN?.value) setLdapBindDn(s.LDAP_BIND_DN.value);
-        if (s.LDAP_BIND_PASSWORD?.value) setLdapBindPassword(s.LDAP_BIND_PASSWORD.value);
         if (s.LDAP_SEARCH_FILTER?.value) setLdapSearchFilter(s.LDAP_SEARCH_FILTER.value);
 
         setSsoEnabled(s.SSO_ENABLED?.value === 'true');
         if (s.SSO_HEADER?.value) setSsoHeader(s.SSO_HEADER.value);
+        if (s.SSO_TRUSTED_PROXIES?.value !== undefined) setSsoTrustedProxies(s.SSO_TRUSTED_PROXIES.value || '');
       }
     } catch (e) {
       console.error(e);
@@ -204,28 +228,32 @@ export const Settings: React.FC = () => {
   const handleSaveSettings = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      await api.updateSettings({
-        TMDB_API_KEY: tmdbKey,
+      const payload: Record<string, string> = {
         SEER_URL: seerUrl,
-        SEER_API_KEY: seerApiKey,
         SEER_DEFAULT_USER_ID: seerDefaultUserId,
         SONARR_URL: sonarrUrl,
-        SONARR_API_KEY: sonarrApiKey,
         RADARR_URL: radarrUrl,
-        RADARR_API_KEY: radarrApiKey,
         DEFAULT_LANGUAGE: defaultLanguage,
         SIMKL_CLIENT_ID: simklClientId,
         JELLYFIN_URL: jellyfinUrl,
+        INTERNAL_HOSTS_ALLOWLIST: internalHostsAllowlist,
         ALLOW_REGISTRATION: allowRegistration ? 'true' : 'false',
         LDAP_ENABLED: ldapEnabled ? 'true' : 'false',
         LDAP_URL: ldapUrl,
         LDAP_BASE_DN: ldapBaseDn,
         LDAP_BIND_DN: ldapBindDn,
-        LDAP_BIND_PASSWORD: ldapBindPassword,
         LDAP_SEARCH_FILTER: ldapSearchFilter,
         SSO_ENABLED: ssoEnabled ? 'true' : 'false',
         SSO_HEADER: ssoHeader,
-      });
+        SSO_TRUSTED_PROXIES: ssoTrustedProxies,
+      };
+      if (tmdbKey.trim()) payload.TMDB_API_KEY = tmdbKey.trim();
+      if (seerApiKey.trim()) payload.SEER_API_KEY = seerApiKey.trim();
+      if (sonarrApiKey.trim()) payload.SONARR_API_KEY = sonarrApiKey.trim();
+      if (radarrApiKey.trim()) payload.RADARR_API_KEY = radarrApiKey.trim();
+      if (ldapBindPassword.trim()) payload.LDAP_BIND_PASSWORD = ldapBindPassword.trim();
+
+      await api.updateSettings(payload);
       setSaveSuccess(true);
       setTimeout(() => setSaveSuccess(false), 3000);
       loadSettings();
@@ -600,7 +628,7 @@ export const Settings: React.FC = () => {
                 type="password"
                 value={tmdbKey}
                 onChange={(e) => setTmdbKey(e.target.value)}
-                placeholder="Ex: 3a2b1c..."
+                placeholder={configuredSecrets.TMDB_API_KEY ? '•••••••• (Configuré — laisser vide pour conserver)' : 'Ex: 3a2b1c...'}
                 className="w-full bg-dark-850 border border-white/10 rounded-xl px-3.5 py-2 text-sm text-slate-100 focus:outline-none focus:border-primary-500"
               />
             </div>
@@ -689,7 +717,7 @@ export const Settings: React.FC = () => {
                   type="password"
                   value={seerApiKey}
                   onChange={(e) => setSeerApiKey(e.target.value)}
-                  placeholder="Clé API Seer..."
+                  placeholder={configuredSecrets.SEER_API_KEY ? '•••••••• (Configuré — laisser vide pour conserver)' : 'Clé API Seer...'}
                   className="w-full bg-dark-850 border border-white/10 rounded-xl px-3.5 py-2 text-sm text-slate-100 focus:outline-none focus:border-primary-500"
                 />
               </div>
@@ -753,7 +781,7 @@ export const Settings: React.FC = () => {
                 type="password"
                 value={sonarrApiKey}
                 onChange={(e) => setSonarrApiKey(e.target.value)}
-                placeholder="Clé API Sonarr..."
+                placeholder={configuredSecrets.SONARR_API_KEY ? '•••••••• (Configuré)' : 'Clé API Sonarr...'}
                 className="w-full bg-dark-850 border border-white/10 rounded-xl px-3 py-1.5 text-xs text-slate-100 focus:outline-none"
               />
               {testResults.sonarr && (
@@ -766,7 +794,7 @@ export const Settings: React.FC = () => {
                 <button
                   type="button"
                   onClick={handleSyncSonarrUnmonitored}
-                  disabled={syncingSonarr || !sonarrUrl || !sonarrApiKey}
+                  disabled={syncingSonarr || !sonarrUrl || (!sonarrApiKey && !configuredSecrets.SONARR_API_KEY)}
                   className="w-full flex items-center justify-center gap-2 py-2 px-3 rounded-xl bg-primary-600/20 hover:bg-primary-600/30 text-primary-300 border border-primary-500/30 text-xs font-bold transition-all disabled:opacity-50"
                 >
                   <RefreshCw className={`w-3.5 h-3.5 ${syncingSonarr ? 'animate-spin' : ''}`} />
@@ -801,7 +829,7 @@ export const Settings: React.FC = () => {
                 type="password"
                 value={radarrApiKey}
                 onChange={(e) => setRadarrApiKey(e.target.value)}
-                placeholder="Clé API Radarr..."
+                placeholder={configuredSecrets.RADARR_API_KEY ? '•••••••• (Configuré)' : 'Clé API Radarr...'}
                 className="w-full bg-dark-850 border border-white/10 rounded-xl px-3 py-1.5 text-xs text-slate-100 focus:outline-none"
               />
               {testResults.radarr && (
@@ -919,7 +947,7 @@ export const Settings: React.FC = () => {
                     type="password"
                     value={ldapBindPassword}
                     onChange={(e) => setLdapBindPassword(e.target.value)}
-                    placeholder="Mot de passe bind..."
+                    placeholder={configuredSecrets.LDAP_BIND_PASSWORD ? '•••••••• (Configuré)' : 'Mot de passe bind...'}
                     className="w-full bg-dark-850 border border-white/10 rounded-xl px-3 py-2 text-xs text-slate-100"
                   />
                 </div>
@@ -963,20 +991,53 @@ export const Settings: React.FC = () => {
             </label>
 
             {ssoEnabled && (
-              <div className="pt-1">
-                <label className="text-xs font-medium text-slate-400 block mb-1">Nom de l'en-tête contenant l'utilisateur</label>
-                <input
-                  type="text"
-                  value={ssoHeader}
-                  onChange={(e) => setSsoHeader(e.target.value)}
-                  placeholder="Remote-User"
-                  className="w-full max-w-sm bg-dark-850 border border-white/10 rounded-xl px-3 py-2 text-xs text-slate-100"
-                />
-                <p className="text-[11px] text-slate-500 mt-1">
-                  Par défaut <code>Remote-User</code> (utilisé par Authelia). Les utilisateurs authentifiés par Authelia seront automatiquement connectés sans mot de passe supplémentaire.
-                </p>
+              <div className="space-y-3 pt-1">
+                <div>
+                  <label className="text-xs font-medium text-slate-400 block mb-1">Nom de l'en-tête contenant l'utilisateur</label>
+                  <input
+                    type="text"
+                    value={ssoHeader}
+                    onChange={(e) => setSsoHeader(e.target.value)}
+                    placeholder="Remote-User"
+                    className="w-full max-w-sm bg-dark-850 border border-white/10 rounded-xl px-3 py-2 text-xs text-slate-100"
+                  />
+                  <p className="text-[11px] text-slate-500 mt-1">
+                    Par défaut <code>Remote-User</code> (utilisé par Authelia).
+                  </p>
+                </div>
+                <div>
+                  <label className="text-xs font-medium text-slate-400 block mb-1">Proxies de confiance autorisés (CIDR / IP séparés par virgule)</label>
+                  <input
+                    type="text"
+                    value={ssoTrustedProxies}
+                    onChange={(e) => setSsoTrustedProxies(e.target.value)}
+                    placeholder="Ex: 172.18.0.0/16,192.168.1.10"
+                    className="w-full bg-dark-850 border border-white/10 rounded-xl px-3 py-2 text-xs text-slate-100 font-mono"
+                  />
+                  <p className="text-[11px] text-amber-400/90 mt-1">
+                    ⚠️ Obligatoire pour la sécurité SSO : indiquez l'IP ou le sous-réseau Docker de votre reverse proxy (Traefik/Nginx/Authelia). Sans proxy de confiance défini, l'en-tête SSO est ignoré.
+                  </p>
+                </div>
               </div>
             )}
+          </div>
+
+          {/* SSRF Internal Hosts Allowlist */}
+          <div className="p-5 rounded-2xl bg-dark-900 border border-white/5 space-y-3">
+            <h3 className="text-sm font-bold text-white flex items-center gap-2">
+              <Shield className="w-4 h-4 text-primary-400" />
+              <span>Hôtes Internes Autorisés (Protection SSRF)</span>
+            </h3>
+            <input
+              type="text"
+              value={internalHostsAllowlist}
+              onChange={(e) => setInternalHostsAllowlist(e.target.value)}
+              placeholder="Ex: jellyfin,sonarr,radarr,192.168.1.50"
+              className="w-full bg-dark-850 border border-white/10 rounded-xl px-3 py-2 text-xs text-slate-100 font-mono"
+            />
+            <p className="text-[11px] text-slate-500">
+              Liste optionnelle d'hôtes ou d'IPs LAN supplémentaires autorisés pour les connexions sortantes du serveur Frame (les URLs déjà configurées dans Jellyfin, Seer, Sonarr et Radarr sont automatiquement autorisées).
+            </p>
           </div>
 
           <div className="flex justify-end">
@@ -1093,7 +1154,7 @@ export const Settings: React.FC = () => {
                   </button>
                 </div>
 
-                <div className="flex items-center gap-3 pt-2">
+                <div className="flex flex-wrap items-center gap-3 pt-2">
                   <button
                     onClick={handleSyncSimkl}
                     disabled={syncingSimkl}
@@ -1102,7 +1163,34 @@ export const Settings: React.FC = () => {
                     <RefreshCw className={`w-3.5 h-3.5 ${syncingSimkl ? 'animate-spin' : ''}`} />
                     <span>{syncingSimkl ? 'Synchronisation en cours...' : 'Synchroniser mes vues maintenant'}</span>
                   </button>
+
+                  {simklStatusInfo && (
+                    <label className="flex items-center gap-2 text-xs text-slate-200 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={simklStatusInfo.autoSync}
+                        onChange={async (e) => {
+                          const checked = e.target.checked;
+                          setSimklStatusInfo((prev) => (prev ? { ...prev, autoSync: checked } : prev));
+                          try {
+                            await api.updateSimklSettings(checked);
+                          } catch {}
+                        }}
+                        className="w-4 h-4 rounded border-slate-700 bg-dark-900 text-emerald-500 focus:ring-0"
+                      />
+                      <span>Synchronisation automatique toutes les 6h</span>
+                    </label>
+                  )}
                 </div>
+
+                {simklStatusInfo?.lastSyncAt && (
+                  <p className="text-[11px] text-slate-400">
+                    Dernière synchro : {new Date(simklStatusInfo.lastSyncAt).toLocaleString('fr-FR')}
+                    {simklStatusInfo.nextSyncAt && simklStatusInfo.autoSync
+                      ? ` • Prochaine : ${new Date(simklStatusInfo.nextSyncAt).toLocaleString('fr-FR')}`
+                      : ''}
+                  </p>
+                )}
 
                 {simklSyncMessage && (
                   <p className="text-xs text-emerald-300 font-medium pt-1">
@@ -1433,14 +1521,16 @@ export const Settings: React.FC = () => {
                 <div className="space-y-1.5">
                   <label className="text-xs font-bold text-white flex items-center justify-between">
                     <span>URL du serveur Jellyfin</span>
-                    <button
-                      type="button"
-                      onClick={handleTestJellyfinServer}
-                      disabled={jellyfinTestingServer}
-                      className="text-[11px] text-indigo-400 hover:text-indigo-300 underline font-semibold disabled:opacity-50"
-                    >
-                      {jellyfinTestingServer ? 'Test en cours...' : 'Tester la connexion au serveur'}
-                    </button>
+                    {isAdmin && (
+                      <button
+                        type="button"
+                        onClick={handleTestJellyfinServer}
+                        disabled={jellyfinTestingServer}
+                        className="text-[11px] text-indigo-400 hover:text-indigo-300 underline font-semibold disabled:opacity-50"
+                      >
+                        {jellyfinTestingServer ? 'Test en cours...' : 'Tester la connexion au serveur'}
+                      </button>
+                    )}
                   </label>
                   <input
                     type="text"

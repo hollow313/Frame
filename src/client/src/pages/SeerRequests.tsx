@@ -17,6 +17,7 @@ import {
 } from 'lucide-react';
 import { SeerRequest, MediaItem } from '../types';
 import { api } from '../services/api';
+import { useAuth } from '../context/AuthContext';
 
 interface SeerRequestsProps {
   onSelectMedia: (item: MediaItem) => void;
@@ -24,6 +25,7 @@ interface SeerRequestsProps {
 }
 
 export const SeerRequests: React.FC<SeerRequestsProps> = ({ onSelectMedia, onNavigateTab }) => {
+  const { isAdmin } = useAuth();
   const [requests, setRequests] = useState<SeerRequest[]>([]);
   const [seerStatus, setSeerStatus] = useState<any>(null);
   const [filter, setFilter] = useState<'all' | 'processing' | 'available' | 'pending'>('all');
@@ -293,8 +295,8 @@ export const SeerRequests: React.FC<SeerRequestsProps> = ({ onSelectMedia, onNav
                   <div>{getStatusBadge(statusNumber)}</div>
 
                   <div className="flex flex-wrap items-center gap-2">
-                    {/* Actions d'approbation pour les demandes en attente */}
-                    {statusNumber === 2 && (
+                    {/* Actions d'approbation pour les demandes en attente (Admin uniquement) */}
+                    {isAdmin && statusNumber === 2 && (
                       <>
                         <button
                           type="button"

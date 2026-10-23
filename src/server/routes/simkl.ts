@@ -1,295 +1,341 @@
+import crypto from 'crypto';
 import { Router, Response } from 'express';
 import { SimklService } from '../services/simklService.js';
+import { setSetting, getSetting } from '../services/settingsService.js';
 import { authenticateToken, AuthenticatedRequest } from '../middleware/auth.js';
 import db from '../db/index.js';
+import { serverError } from '../utils/httpError.js';
 
 const router = Router();
+
 router.use(authenticateToken);
 
-// ==========================================
-// FLUX OAUTH 2.0 (RECOMMANDÉ - AUTH V2 BROWSER SIGN-IN)
-// ==========================================
-
-// 1. Initialiser le flux OAuth 2.0 avec PKCE
-router.post('/oauth/init', async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+/**
+ * Obtenir l'état détaillé de la synchronisation Simkl de l'utilisateur courant (U-04)
+ */
+router.get('/status', (req: AuthenticatedRequest, res: Response) => {
   try {
-    const userId = req.user!.id;
-    const { clientId, clientSecret, redirectUri } = req.body;
+    const row = db
+      .prepare(
+        'SELECT simkl_token, simkl_last_sync_at, simkl_last_sync_status, simkl_last_sync_error, simkl_auto_sync FROM users WHERE id = ?'
+      )
+      .get(req.user!.id) as any;
 
-    const userStmt = db.prepare('SELECT simkl_client_id, simkl_client_secret FROM users WHERE id = ?');
-    const userRow = userStmt.get(userId) as any;
-
-    const effectiveClientId = clientId?.trim() || userRow?.simkl_client_id || undefined;
-    const effectiveClientSecret = clientSecret?.trim() || userRow?.simkl_client_secret || undefined;
-    const effectiveRedirectUri = (redirectUri?.trim() || '').replace(/\/$/, '');
-
-    if (!effectiveRedirectUri) {
-      res.status(400).json({ error: 'URL de redirection requise' });
-      return;
-    }
-
-    const oauthInit = SimklService.initOAuth2({
-      clientId: effectiveClientId,
-      clientSecret: effectiveClientSecret,
-      redirectUri: effectiveRedirectUri,
-    });
-
-    // Sauvegarder clientId, clientSecret, codeVerifier et redirectUri en base pour persistance robuste
-    db.prepare(`
-      UPDATE users 
-      SET simkl_client_id = COALESCE(?, simkl_client_id), 
-          simkl_client_secret = COALESCE(?, simkl_client_secret),
-          simkl_oauth_verifier = ?,
-          simkl_oauth_redirect_uri = ?
-      WHERE id = ?
-    `).run(effectiveClientId || null, effectiveClientSecret || null, oauthInit.codeVerifier, effectiveRedirectUri, userId);
+    const lastSyncAt = row?.simkl_last_sync_at || null;
+    const autoSync = row?.simkl_auto_sync !== 0;
+    const nextSyncAt =
+      lastSyncAt && autoSync
+        ? new Date(new Date(lastSyncAt).getTime() + 6 * 60 * 60 * 1000).toISOString()
+        : null;
 
     res.json({
-      authUrl: oauthInit.authUrl,
-      state: oauthInit.state,
-      codeVerifier: oauthInit.codeVerifier,
-      clientId: effectiveClientId,
-      redirectUri: effectiveRedirectUri,
+      connected: Boolean(row?.simkl_token),
+      autoSync,
+      lastSyncAt,
+      lastSyncStatus: row?.simkl_last_sync_status || null,
+      lastSyncError: row?.simkl_last_sync_error || null,
+      nextSyncAt,
     });
   } catch (err: any) {
-    res.status(400).json({ error: err.message || 'Impossible d\'initialiser OAuth Simkl' });
+    serverError(res, err, 'SimklStatus');
   }
 });
 
-// 2. Échanger le code OAuth 2.0 reçu contre un token d'accès
-router.post('/oauth/callback', async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+/**
+ * Activer / Désactiver la synchronisation automatique Simkl toutes les 6h (U-04)
+ */
+router.put('/settings', (req: AuthenticatedRequest, res: Response) => {
   try {
-    const userId = req.user!.id;
+    const { autoSync } = req.body;
+    db.prepare('UPDATE users SET simkl_auto_sync = ? WHERE id = ?').run(autoSync !== false ? 1 : 0, req.user!.id);
+    res.json({
+      success: true,
+      autoSync: autoSync !== false,
+      message: autoSync !== false
+        ? 'Synchronisation automatique Simkl (toutes les 6h) activée.'
+        : 'Synchronisation automatique Simkl désactivée.',
+    });
+  } catch (err: any) {
+    serverError(res, err, 'SimklSettings');
+  }
+});
+
+/**
+ * 1A. Initialiser le flux OAuth 2.0 Simkl avec PKCE (S256)
+ */
+router.post('/oauth/init', (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const { clientId, clientSecret, redirectUri } = req.body;
+    const cleanClientId = (clientId || SimklService.getClientId()).trim();
+    const cleanSecret = (clientSecret || SimklService.getClientSecret()).trim();
+
+    if (!cleanClientId) {
+      res.status(400).json({ error: 'Veuillez renseigner votre Client ID Simkl.' });
+      return;
+    }
+
+    if (!redirectUri) {
+      res.status(400).json({ error: 'redirectUri est requis.' });
+      return;
+    }
+
+    db.prepare('UPDATE users SET simkl_client_id = ?, simkl_client_secret = ? WHERE id = ?').run(
+      cleanClientId,
+      cleanSecret || null,
+      req.user!.id
+    );
+
+    if (!getSetting('SIMKL_CLIENT_ID')) {
+      setSetting('SIMKL_CLIENT_ID', cleanClientId);
+    }
+    if (cleanSecret && !getSetting('SIMKL_CLIENT_SECRET')) {
+      setSetting('SIMKL_CLIENT_SECRET', cleanSecret);
+    }
+
+    const { codeVerifier, codeChallenge } = SimklService.generatePkcePair();
+    const state = crypto.randomBytes(16).toString('hex');
+
+    const authUrl = SimklService.buildAuthorizationUrl({
+      clientId: cleanClientId,
+      redirectUri,
+      state,
+      codeChallenge,
+    });
+
+    res.json({
+      authUrl,
+      state,
+      codeVerifier,
+      clientId: cleanClientId,
+      redirectUri,
+    });
+  } catch (err: any) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+/**
+ * 1B. Échanger le code OAuth 2.0 (ou l'URL complète contenant ?code=...) contre un access_token
+ */
+router.post('/oauth/callback', async (req: AuthenticatedRequest, res: Response) => {
+  try {
     let { code, codeVerifier, redirectUri, clientId, clientSecret } = req.body;
 
     if (!code) {
-      res.status(400).json({ error: 'Code d\'autorisation Simkl manquant.' });
+      res.status(400).json({ error: "Code d'autorisation Simkl manquant." });
       return;
     }
 
-    // Si l'utilisateur a copié-collé une URL complète (ex: https://simkl.com/?code=XYZ...)
-    let cleanCode = String(code).trim();
-    if (cleanCode.includes('code=')) {
+    let extractedCode = String(code).trim();
+    if (extractedCode.includes('code=')) {
       try {
-        const match = cleanCode.match(/[?&#]code=([^&#]+)/);
-        if (match && match[1]) {
-          cleanCode = decodeURIComponent(match[1]);
-        }
+        const parsedUrl = new URL(
+          extractedCode.startsWith('http')
+            ? extractedCode
+            : `https://simkl.com/?${extractedCode.replace(/^\?/, '')}`
+        );
+        extractedCode = parsedUrl.searchParams.get('code') || extractedCode;
       } catch {
-        // En cas d'échec de parsing, conserver tel quel
+        const match = extractedCode.match(/[?&]code=([^&#\s]+)/);
+        if (match && match[1]) extractedCode = decodeURIComponent(match[1]);
       }
     }
 
-    const userStmt = db.prepare('SELECT simkl_client_id, simkl_client_secret, simkl_oauth_verifier, simkl_oauth_redirect_uri FROM users WHERE id = ?');
-    const userRow = userStmt.get(userId) as any;
+    const userRow = db
+      .prepare('SELECT simkl_client_id, simkl_client_secret FROM users WHERE id = ?')
+      .get(req.user!.id) as any;
 
-    const effectiveClientId = clientId?.trim() || userRow?.simkl_client_id || undefined;
-    const effectiveClientSecret = clientSecret?.trim() || userRow?.simkl_client_secret || undefined;
-    const effectiveVerifier = (codeVerifier && String(codeVerifier).trim()) || userRow?.simkl_oauth_verifier || undefined;
-    const effectiveRedirectUri = (redirectUri && String(redirectUri).trim()) || userRow?.simkl_oauth_redirect_uri || 'https://simkl.com';
+    const cleanClientId = (clientId || userRow?.simkl_client_id || SimklService.getClientId()).trim();
+    const cleanSecret = (clientSecret || userRow?.simkl_client_secret || SimklService.getClientSecret()).trim();
 
-    if (!effectiveVerifier) {
-      res.status(400).json({ error: 'Vérificateur PKCE introuvable. Veuillez relancer l\'étape 1 d\'autorisation.' });
+    if (!cleanClientId) {
+      res.status(400).json({ error: 'Client ID Simkl introuvable.' });
       return;
     }
 
-    const tokenData = await SimklService.exchangeOAuth2Code({
-      code: cleanCode,
-      codeVerifier: effectiveVerifier,
-      redirectUri: effectiveRedirectUri,
-      clientId: effectiveClientId,
-      clientSecret: effectiveClientSecret,
+    const tokenRes = await SimklService.exchangeCodeForToken({
+      code: extractedCode,
+      clientId: cleanClientId,
+      clientSecret: cleanSecret || undefined,
+      redirectUri: redirectUri || 'https://simkl.com',
+      codeVerifier,
     });
 
-    // Tester le token et récupérer le profil Simkl
-    const test = await SimklService.testToken(tokenData.access_token, effectiveClientId);
+    const validation = await SimklService.validateAccessToken(tokenRes.accessToken, cleanClientId);
 
-    // Enregistrer en base de données
-    const stmt = db.prepare(`
-      UPDATE users 
-      SET simkl_access_token = ?, 
-          simkl_refresh_token = ?, 
-          simkl_user_id = ?, 
-          simkl_client_id = COALESCE(?, simkl_client_id), 
-          simkl_client_secret = COALESCE(?, simkl_client_secret)
-      WHERE id = ?
-    `);
-    stmt.run(
-      tokenData.access_token,
-      tokenData.refresh_token || null,
-      test.user?.id ? test.user.id.toString() : null,
-      effectiveClientId || null,
-      effectiveClientSecret || null,
-      userId
+    db.prepare(
+      'UPDATE users SET simkl_token = ?, simkl_refresh_token = COALESCE(?, simkl_refresh_token), simkl_user_id = ?, simkl_client_id = ?, simkl_client_secret = ? WHERE id = ?'
+    ).run(
+      tokenRes.accessToken,
+      tokenRes.refreshToken || null,
+      validation.accountId || null,
+      cleanClientId,
+      cleanSecret || null,
+      req.user!.id
     );
 
-    // Déclencher automatiquement la synchronisation initiale Simkl -> Frame
-    SimklService.syncSimklToFrame(userId, tokenData.access_token, effectiveClientId)
-      .then((stats) => console.log(`[Simkl] Auto-sync réussie pour user ${userId}: ${stats.importedMovies} films, ${stats.importedShows} séries`))
-      .catch((err) => console.error(`[Simkl] Erreur auto-sync pour user ${userId}:`, err));
+    let syncStats = null;
+    try {
+      syncStats = await SimklService.syncWatchedItems(req.user!.id);
+    } catch {
+      // Ignorer si la synchro initiale échoue
+    }
 
     res.json({
       success: true,
-      message: `Compte Simkl lié avec succès (${test.user?.name || 'Utilisateur'}) ! Synchronisation de votre historique lancée.`,
-      user: test.user,
+      message: syncStats
+        ? `Compte Simkl (${validation.name || 'Connecté'}) lié avec succès ! ${syncStats.importedMovies} films, ${syncStats.importedShows} séries, ${syncStats.importedAnime} animés et ${syncStats.importedManga} mangas importés.`
+        : `Compte Simkl (${validation.name || 'Connecté'}) lié avec succès !`,
+      user: validation,
+      stats: syncStats,
     });
   } catch (err: any) {
-    res.status(400).json({ error: err.message || 'Erreur lors de la validation OAuth Simkl' });
+    res.status(400).json({ error: err.message });
   }
 });
 
-// ==========================================
-// FLUX PIN CODE / DEVICE FLOW (V2 & V1)
-// ==========================================
-
-// 1. Obtenir un nouveau code PIN Simkl pour l'utilisateur
-router.get('/pin', async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+/**
+ * 1C. Générer un code PIN Simkl pour lier facilement un compte sans saisir d'URL de callback
+ */
+router.get('/pin', async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const userId = req.user!.id;
-    const userStmt = db.prepare('SELECT simkl_client_id, simkl_client_secret FROM users WHERE id = ?');
-    const userRow = userStmt.get(userId) as any;
-
-    const clientIdParam = (req.query.clientId as string)?.trim() || userRow?.simkl_client_id || undefined;
-    const clientSecretParam = (req.query.clientSecret as string)?.trim() || userRow?.simkl_client_secret || undefined;
-
-    const pinData = await SimklService.getPin(clientIdParam, clientSecretParam);
-
-    // Mémoriser le Client ID pour cet utilisateur
-    if (clientIdParam) {
-      db.prepare('UPDATE users SET simkl_client_id = ? WHERE id = ?').run(clientIdParam, userId);
-    }
-
+    const customClientId = req.query.clientId as string | undefined;
+    const customClientSecret = req.query.clientSecret as string | undefined;
+    const pinData = await SimklService.getDevicePin(customClientId, customClientSecret);
     res.json(pinData);
   } catch (err: any) {
-    res.status(400).json({ error: err.message || 'Impossible de générer le code PIN Simkl' });
+    res.status(400).json({ error: err.message });
   }
 });
 
-// 2. Vérifier si l'utilisateur a approuvé le code PIN
-router.post('/pin/check', async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+/**
+ * 2. Vérifier si le code PIN a été validé par l'utilisateur et sauvegarder son token
+ */
+router.post('/pin/check', async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const userId = req.user!.id;
     const { userCode, clientId, deviceCode, clientSecret } = req.body;
-
     if (!userCode) {
-      res.status(400).json({ error: 'Code utilisateur requis' });
+      res.status(400).json({ error: 'userCode est requis.' });
       return;
     }
 
-    const userStmt = db.prepare('SELECT simkl_client_id, simkl_client_secret FROM users WHERE id = ?');
-    const userRow = userStmt.get(userId) as any;
-    const effectiveClientId = clientId?.trim() || userRow?.simkl_client_id || undefined;
-    const effectiveClientSecret = clientSecret?.trim() || userRow?.simkl_client_secret || undefined;
+    const result = await SimklService.checkDevicePin(userCode, clientId, deviceCode, clientSecret);
 
-    const check = await SimklService.checkPin(userCode, effectiveClientId, deviceCode, effectiveClientSecret);
+    if (result.result === 'OK' && result.access_token) {
+      const validation = await SimklService.validateAccessToken(result.access_token, clientId);
+      const cleanClientId = clientId ? clientId.trim() : SimklService.getClientId();
+      const cleanSecret = clientSecret ? clientSecret.trim() : SimklService.getClientSecret();
 
-    if (check.authorized && check.access_token) {
-      // Tester le token et enregistrer
-      const test = await SimklService.testToken(check.access_token, effectiveClientId);
-      const stmt = db.prepare(`
-        UPDATE users 
-        SET simkl_access_token = ?, 
-            simkl_refresh_token = ?, 
-            simkl_user_id = ?, 
-            simkl_client_id = COALESCE(?, simkl_client_id),
-            simkl_client_secret = COALESCE(?, simkl_client_secret)
-        WHERE id = ?
-      `);
-      stmt.run(
-        check.access_token,
-        check.refresh_token || null,
-        test.user?.id ? test.user.id.toString() : null,
-        effectiveClientId || null,
-        effectiveClientSecret || null,
-        userId
+      db.prepare(
+        'UPDATE users SET simkl_token = ?, simkl_refresh_token = COALESCE(?, simkl_refresh_token), simkl_user_id = ?, simkl_client_id = ?, simkl_client_secret = ? WHERE id = ?'
+      ).run(
+        result.access_token,
+        result.refresh_token || null,
+        validation.accountId || null,
+        cleanClientId,
+        cleanSecret || null,
+        req.user!.id
       );
 
-      // Déclencher automatiquement la synchronisation initiale Simkl -> Frame
-      SimklService.syncSimklToFrame(userId, check.access_token, effectiveClientId)
-        .then((stats) => console.log(`[Simkl PIN] Auto-sync réussie pour user ${userId}: ${stats.importedMovies} films, ${stats.importedShows} séries`))
-        .catch((err) => console.error(`[Simkl PIN] Erreur auto-sync pour user ${userId}:`, err));
+      let syncStats = null;
+      try {
+        syncStats = await SimklService.syncWatchedItems(req.user!.id);
+      } catch {
+        // Ignorer
+      }
 
       res.json({
         authorized: true,
-        message: `Compte Simkl lié avec succès (${test.user?.name || 'Utilisateur'}) ! Synchronisation de votre historique lancée.`,
+        message: syncStats
+          ? `Compte Simkl (${validation.name || 'Connecté'}) lié avec succès ! ${syncStats.importedMovies} films, ${syncStats.importedShows} séries et ${syncStats.importedAnime} animés synchronisés.`
+          : `Compte Simkl (${validation.name || 'Connecté'}) lié avec succès !`,
+        user: validation,
+        stats: syncStats,
       });
       return;
     }
 
-    res.json({ authorized: false, message: check.message || 'En attente de validation sur Simkl...' });
+    res.json({
+      authorized: false,
+      message: result.message || 'Code non encore validé sur Simkl.',
+    });
   } catch (err: any) {
-    res.status(500).json({ error: err.message });
+    res.status(400).json({ error: err.message });
   }
 });
 
-// ==========================================
-// TOKEN DIRECT & SYNCHRONISATION
-// ==========================================
-
-// Lier manuellement avec un Access Token
-router.post('/link', async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+/**
+ * 3. Lier directement un Access Token Simkl (et Client ID optionnel) pour l'utilisateur courant
+ */
+router.post('/link', async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const userId = req.user!.id;
     const { accessToken, clientId } = req.body;
-
     if (!accessToken) {
-      res.status(400).json({ error: "Token d'accès Simkl requis." });
+      res.status(400).json({ error: "Jeton d'accès Simkl requis." });
       return;
     }
 
-    const test = await SimklService.testToken(accessToken, clientId?.trim());
-    if (!test.success) {
-      res.status(400).json({ error: test.message });
+    if (clientId && clientId.trim() !== '' && !getSetting('SIMKL_CLIENT_ID')) {
+      setSetting('SIMKL_CLIENT_ID', clientId.trim());
+    }
+
+    const validation = await SimklService.validateAccessToken(accessToken, clientId);
+    if (!validation.valid) {
+      res.status(400).json({ error: validation.error || 'Jeton Simkl invalide.' });
       return;
     }
 
-    const stmt = db.prepare('UPDATE users SET simkl_access_token = ?, simkl_user_id = ?, simkl_client_id = ? WHERE id = ?');
-    stmt.run(accessToken.trim(), test.user?.id ? test.user.id.toString() : null, clientId?.trim() || null, userId);
+    const cleanClientId = clientId ? clientId.trim() : SimklService.getClientId();
 
-    // Déclencher automatiquement la synchronisation initiale Simkl -> Frame
-    SimklService.syncSimklToFrame(userId, accessToken.trim(), clientId?.trim())
-      .then((stats) => console.log(`[Simkl Link] Auto-sync réussie pour user ${userId}: ${stats.importedMovies} films, ${stats.importedShows} séries`))
-      .catch((err) => console.error(`[Simkl Link] Erreur auto-sync pour user ${userId}:`, err));
+    db.prepare(
+      'UPDATE users SET simkl_token = ?, simkl_user_id = ?, simkl_client_id = ? WHERE id = ?'
+    ).run(accessToken.trim(), validation.accountId || null, cleanClientId, req.user!.id);
 
-    res.json({ success: true, message: `Compte Simkl lié avec succès (${test.user?.name || 'Utilisateur'}) ! Synchronisation de votre historique lancée.` });
-  } catch (err: any) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// Déconnecter Simkl
-router.post('/unlink', (req: AuthenticatedRequest, res: Response) => {
-  try {
-    const userId = req.user!.id;
-    const stmt = db.prepare('UPDATE users SET simkl_access_token = NULL, simkl_refresh_token = NULL, simkl_user_id = NULL WHERE id = ?');
-    stmt.run(userId);
-    res.json({ success: true, message: 'Compte Simkl déconnecté.' });
-  } catch (err: any) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// Synchroniser les vues depuis Simkl vers Frame
-router.post('/sync', async (req: AuthenticatedRequest, res: Response): Promise<void> => {
-  try {
-    const userId = req.user!.id;
-    const userStmt = db.prepare('SELECT simkl_access_token, simkl_client_id FROM users WHERE id = ?');
-    const user = userStmt.get(userId) as any;
-
-    if (!user || !user.simkl_access_token) {
-      res.status(400).json({ error: 'Compte Simkl non associé. Veuillez d\'abord lier votre compte.' });
-      return;
+    let syncStats = null;
+    try {
+      syncStats = await SimklService.syncWatchedItems(req.user!.id);
+    } catch {
+      // Ignorer
     }
-
-    const stats = await SimklService.syncSimklToFrame(userId, user.simkl_access_token, user.simkl_client_id);
 
     res.json({
       success: true,
-      message: `Synchronisation Simkl réussie ! ${stats.importedMovies} films, ${stats.importedShows} séries et ${stats.importedAnime} animés importés dans Frame.`,
-      stats,
+      message: syncStats
+        ? `Compte Simkl (${validation.name}) lié et synchronisé (${syncStats.importedMovies} films, ${syncStats.importedShows} séries, ${syncStats.importedAnime} animés, ${syncStats.importedManga} mangas) !`
+        : `Compte Simkl (${validation.name}) lié avec succès !`,
     });
   } catch (err: any) {
-    res.status(500).json({ error: err.message });
+    res.status(400).json({ error: err.message });
+  }
+});
+
+/**
+ * 4. Délier le compte Simkl de l'utilisateur courant
+ */
+router.post('/unlink', (req: AuthenticatedRequest, res: Response) => {
+  try {
+    db.prepare('UPDATE users SET simkl_token = NULL, simkl_refresh_token = NULL, simkl_user_id = NULL WHERE id = ?').run(
+      req.user!.id
+    );
+    res.json({ success: true, message: 'Compte Simkl délié.' });
+  } catch (err: any) {
+    serverError(res, err, 'SimklUnlink');
+  }
+});
+
+/**
+ * 5. Synchroniser manuellement l'historique et la watchlist depuis Simkl
+ */
+router.post('/sync', async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const result = await SimklService.syncWatchedItems(req.user!.id);
+    res.json({
+      success: true,
+      message: `Synchronisation terminée : ${result.importedMovies} films, ${result.importedShows} séries, ${result.importedAnime} animés, ${result.importedManga} mangas et ${result.importedWatchlist} titres à voir importés.`,
+      stats: result,
+    });
+  } catch (err: any) {
+    res.status(400).json({ error: err.message });
   }
 });
 

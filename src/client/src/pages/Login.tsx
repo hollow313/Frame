@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Film, Lock, User, Sparkles, AlertCircle, Shield, KeyRound } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
-import { api } from '../services/api';
+import { api, setToken } from '../services/api';
 
 interface LoginProps {
   onSuccess: () => void;
@@ -27,7 +27,13 @@ export const Login: React.FC<LoginProps> = ({ onSuccess }) => {
 
       // Si authentifié via en-tête SSO (Authelia / Reverse Proxy)
       if (status.ssoUser) {
-        refreshUser().then(() => onSuccess());
+        api.loginSso()
+          .then((res) => {
+            if (res.token) setToken(res.token);
+            return refreshUser();
+          })
+          .then(() => onSuccess())
+          .catch(() => {});
       }
     }).catch(() => {});
   }, []);

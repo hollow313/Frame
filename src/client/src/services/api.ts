@@ -1,4 +1,16 @@
-import { MediaItem, TvSeason, WatchedItem, WatchlistItem, RecommendationResponse, UserStats, User, SeerRequest, SeerMediaStatus, ArrStatus } from '../types';
+import {
+  MediaItem,
+  MediaType,
+  TvSeason,
+  WatchedItem,
+  WatchlistItem,
+  RecommendationResponse,
+  UserStats,
+  User,
+  SeerRequest,
+  SeerMediaStatus,
+  ArrStatus,
+} from '../types';
 
 const API_BASE = '/api';
 
@@ -18,7 +30,7 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
   const token = getToken();
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
-    ...(options.headers as Record<string, string> || {}),
+    ...((options.headers as Record<string, string>) || {}),
   };
 
   if (token) {
@@ -40,13 +52,18 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
 
 export const api = {
   // ==================== AUTH ====================
-  getAuthStatus: () => request<{
-    initialized: boolean;
-    allowRegistration: boolean;
-    ldapEnabled: boolean;
-    ssoEnabled: boolean;
-    ssoUser?: User | null;
-  }>('/auth/status'),
+  getAuthStatus: () =>
+    request<{
+      initialized: boolean;
+      allowRegistration: boolean;
+      ldapEnabled: boolean;
+      ssoEnabled: boolean;
+      ssoUser?: { username: string } | null;
+    }>('/auth/status'),
+  loginSso: () =>
+    request<{ user: User; token: string }>('/auth/sso', {
+      method: 'POST',
+    }),
   login: (credentials: { username: string; password: string }) =>
     request<{ user: User; token: string; simklConnected?: boolean; jellyfinConnected?: boolean }>('/auth/login', {
       method: 'POST',
@@ -79,8 +96,8 @@ export const api = {
     request<{ results: MediaItem[]; page: number; total_pages: number }>(`/tmdb/popular/tv?page=${page}`),
   search: (query: string, page: number = 1) =>
     request<{ results: MediaItem[]; page: number; total_pages: number }>(`/tmdb/search?q=${encodeURIComponent(query)}&page=${page}`),
-  getMediaDetails: (mediaType: 'movie' | 'tv', id: number) =>
-    request<MediaItem>(`/tmdb/${mediaType}/${id}`),
+  getMediaDetails: (mediaType: MediaType, id: number) =>
+    request<MediaItem>(`/tmdb/${mediaType === 'manga' ? 'tv' : mediaType}/${id}`),
   getTvSeason: (tvId: number, seasonNumber: number) =>
     request<TvSeason>(`/tmdb/tv/${tvId}/season/${seasonNumber}`),
   getUpcomingMedia: (
@@ -129,7 +146,7 @@ export const api = {
   // ==================== WATCH TRACKING ====================
   markAsWatched: (payload: {
     tmdbId: number;
-    mediaType: 'movie' | 'tv';
+    mediaType: MediaType;
     title: string;
     posterPath?: string | null;
     backdropPath?: string | null;
@@ -139,21 +156,68 @@ export const api = {
     rating?: number | null;
     review?: string | null;
     watchedAt?: string | null;
-  }) => request<{ success: boolean; message: string }>('/media/watched', {
-    method: 'POST',
-    body: JSON.stringify(payload),
-  }),
-  unmarkWatched: (mediaType: 'movie' | 'tv', tmdbId: number) =>
+  }) =>
+    request<{ success: boolean; message: string }>('/media/watched', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+  unmarkWatched: (mediaType: MediaType, tmdbId: number) =>
     request<{ success: boolean; message: string }>(`/media/watched/${mediaType}/${tmdbId}`, {
       method: 'DELETE',
     }),
-  getWatched: (type?: 'movie' | 'tv' | 'anime', sort?: string) =>
+  getWatched: (type?: 'movie' | 'tv' | 'anime' | 'manga', sort?: string) =>
     request<WatchedItem[]>(`/media/watched?${type ? `type=${type}&` : ''}${sort ? `sort=${sort}` : ''}`),
+
+  // Suivi épisode par épisode (U-01)
+  getWatchedEpisodes: (tmdbId: number) =>
+    request<{
+      tmdbId: number;
+      episodes: Array<{ seasonNumber: number; episodeNumber: number; watchedAt: string; rating: number | null; runtime: number }>;
+    }>(`/media/watched/episodes/${tmdbId}`),
+  markEpisodeWatched: (payload: {
+    tmdbId: number;
+    seasonNumber: number;
+    episodeNumber: number;
+    title?: string;
+    posterPath?: string | null;
+    backdropPath?: string | null;
+    releaseDate?: string | null;
+    genres?: any[];
+    runtime?: number | null;
+  }) =>
+    request<{ success: boolean; message: string; watchedAt: string }>('/media/watched/episode', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+  unmarkEpisodeWatched: (tmdbId: number, seasonNumber: number, episodeNumber: number) =>
+    request<{ success: boolean; message: string }>(`/media/watched/episode/${tmdbId}/${seasonNumber}/${episodeNumber}`, {
+      method: 'DELETE',
+    }),
+  markSeasonWatched: (payload: {
+    tmdbId: number;
+    seasonNumber: number;
+    episodeCount?: number;
+    episodes?: Array<{ episodeNumber: number; runtime?: number | null }>;
+    title?: string;
+    posterPath?: string | null;
+    backdropPath?: string | null;
+    releaseDate?: string | null;
+    genres?: any[];
+    runtime?: number | null;
+  }) =>
+    request<{ success: boolean; markedCount: number; message: string }>('/media/watched/season', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+  unmarkSeasonWatched: (tmdbId: number, seasonNumber: number) =>
+    request<{ success: boolean; message: string }>(`/media/watched/season/${tmdbId}/${seasonNumber}`, {
+      method: 'DELETE',
+    }),
 
   // ==================== WATCHLIST ====================
   addToWatchlist: (payload: {
     tmdbId: number;
-    mediaType: 'movie' | 'tv';
+    mediaType: MediaType;
     title: string;
     posterPath?: string | null;
     backdropPath?: string | null;
@@ -161,20 +225,40 @@ export const api = {
     genres?: any[];
     overview?: string | null;
     status?: string;
-  }) => request<{ success: boolean; message: string }>('/media/watchlist', {
-    method: 'POST',
-    body: JSON.stringify(payload),
-  }),
-  removeFromWatchlist: (mediaType: 'movie' | 'tv', tmdbId: number) =>
+  }) =>
+    request<{ success: boolean; message: string }>('/media/watchlist', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+  removeFromWatchlist: (mediaType: MediaType, tmdbId: number) =>
     request<{ success: boolean; message: string }>(`/media/watchlist/${mediaType}/${tmdbId}`, {
       method: 'DELETE',
     }),
-  getWatchlist: (type?: 'movie' | 'tv') =>
+  getWatchlist: (type?: 'movie' | 'tv' | 'anime' | 'manga') =>
     request<WatchlistItem[]>(`/media/watchlist${type ? `?type=${type}` : ''}`),
 
   // ==================== STATS & RECOMMENDATIONS ====================
   getUserStats: () => request<UserStats>('/media/stats'),
   getRecommendations: () => request<RecommendationResponse>('/recommendations'),
+  recordRecoEvent: (payload: {
+    mediaType: MediaType;
+    tmdbId: number;
+    event: 'impression' | 'click' | 'watchlist' | 'watched' | 'not_interested' | 'dismiss';
+    section?: string;
+  }) =>
+    request<{ success: boolean }>('/reco/event', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+  markNotInterested: (mediaType: MediaType, tmdbId: number) =>
+    request<{ success: boolean; message: string }>('/reco/not-interested', {
+      method: 'POST',
+      body: JSON.stringify({ mediaType, tmdbId }),
+    }),
+  unmarkNotInterested: (mediaType: MediaType, tmdbId: number) =>
+    request<{ success: boolean; message: string }>(`/reco/not-interested/${mediaType}/${tmdbId}`, {
+      method: 'DELETE',
+    }),
 
   // ==================== SEER (OVERSEERR) ====================
   getSeerStatus: () => request<{ configured: boolean; connected: boolean; message: string; version?: string }>('/seer/status'),
@@ -213,6 +297,20 @@ export const api = {
     ),
 
   // ==================== SIMKL ====================
+  getSimklStatus: () =>
+    request<{
+      connected: boolean;
+      autoSync: boolean;
+      lastSyncAt: string | null;
+      lastSyncStatus: string | null;
+      lastSyncError: string | null;
+      nextSyncAt: string | null;
+    }>('/simkl/status'),
+  updateSimklSettings: (autoSync: boolean) =>
+    request<{ success: boolean; autoSync: boolean; message: string }>('/simkl/settings', {
+      method: 'PUT',
+      body: JSON.stringify({ autoSync }),
+    }),
   initSimklOAuth: (payload: { clientId?: string; clientSecret?: string; redirectUri: string }) =>
     request<{ authUrl: string; state: string; codeVerifier: string; clientId?: string; redirectUri: string }>('/simkl/oauth/init', {
       method: 'POST',

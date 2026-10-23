@@ -1,4 +1,4 @@
-export type MediaType = 'movie' | 'tv';
+export type MediaType = 'movie' | 'tv' | 'manga';
 
 export interface Genre {
   id: number;
@@ -59,6 +59,9 @@ export interface MediaItem {
   userRating?: number | null;
   inWatchlist?: boolean;
   watchlistStatus?: string | null;
+  score?: number;
+  reasons?: string[];
+  recommendationReason?: string;
 }
 
 export interface TvEpisode {
@@ -102,6 +105,9 @@ export interface WatchedItem {
   rating: number | null;
   review: string | null;
   isAnime?: boolean;
+  isManga?: boolean;
+  watchedEpisodesCount?: number;
+  nextEpisode?: { seasonNumber: number; episodeNumber: number } | null;
 }
 
 export interface WatchlistItem {
@@ -116,6 +122,8 @@ export interface WatchlistItem {
   overview: string | null;
   status: string;
   added_at: string;
+  isAnime?: boolean;
+  isManga?: boolean;
   next_episode_to_air?: {
     id: number;
     name: string;
@@ -136,6 +144,7 @@ export interface WatchlistItem {
 }
 
 export interface RecommendationSection {
+  key?: string;
   title: string;
   subtitle?: string;
   reason?: string;
@@ -143,6 +152,8 @@ export interface RecommendationSection {
 }
 
 export interface RecommendationResponse {
+  generatedAt?: string;
+  profileStrength?: 'cold' | 'warming' | 'mature';
   hasEnoughData: boolean;
   heroItems: HeroProposalItem[];
   topGenres: { id: number; name: string; count: number }[];
@@ -299,8 +310,13 @@ export interface User {
   simklConnected?: boolean;
   simklClientId?: string;
   simklClientSecret?: string;
+  simklLastSyncAt?: string | null;
+  simklLastSyncStatus?: string | null;
+  simklLastSyncError?: string | null;
+  simklAutoSync?: boolean;
   jellyfinConnected?: boolean;
   jellyfinServerUrl?: string;
+  seerUserId?: number | null;
   prefIncludeMovies?: boolean;
   prefIncludeTv?: boolean;
   prefIncludeAnime?: boolean;

@@ -15,7 +15,7 @@ export const Watchlist: React.FC<WatchlistProps> = ({
   onNavigateTab,
 }) => {
   const [items, setItems] = useState<WatchlistItem[]>([]);
-  const [filterType, setFilterType] = useState<'all' | 'movie' | 'tv'>('all');
+  const [filterType, setFilterType] = useState<'all' | 'movie' | 'tv' | 'manga'>('all');
   const [loading, setLoading] = useState<boolean>(true);
 
   useEffect(() => {
@@ -81,6 +81,14 @@ export const Watchlist: React.FC<WatchlistProps> = ({
             }`}
           >
             Séries
+          </button>
+          <button
+            onClick={() => setFilterType('manga')}
+            className={`px-3 py-1.5 rounded-lg text-xs font-semibold ${
+              filterType === 'manga' ? 'bg-pink-500 text-white shadow' : 'text-slate-400 hover:text-white'
+            }`}
+          >
+            Mangas
           </button>
         </div>
       </div>

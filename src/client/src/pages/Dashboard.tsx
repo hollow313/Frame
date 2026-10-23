@@ -58,6 +58,37 @@ export const Dashboard: React.FC<DashboardProps> = ({
     }
   };
 
+  const handleSelectWithTelemetry = (item: MediaItem) => {
+    if (user) {
+      api.recordRecoEvent({ mediaType: item.media_type, tmdbId: item.id, event: 'click' }).catch(() => {});
+    }
+    onSelectMedia(item);
+  };
+
+  const handleNotInterested = async (item: MediaItem) => {
+    if (!user) return;
+    // Retirer immédiatement de l'interface
+    setRecommendations((prev) => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        sections: prev.sections
+          .map((sec) => ({
+            ...sec,
+            items: sec.items.filter((i) => !(i.id === item.id && i.media_type === item.media_type)),
+          }))
+          .filter((sec) => sec.items.length > 0),
+      };
+    });
+    setHeroItems((prev) => prev.filter((i) => !(i.id === item.id && i.media_type === item.media_type)));
+
+    try {
+      await api.markNotInterested(item.media_type, item.id);
+    } catch (e) {
+      console.error('Erreur masquage recommandation', e);
+    }
+  };
+
   if (loading) {
     return (
       <div className="min-h-[70vh] flex flex-col items-center justify-center space-y-4">
@@ -115,7 +146,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
       {heroItems.length > 0 && (
         <HeroCarousel
           items={heroItems}
-          onSelect={onSelectMedia}
+          onSelect={handleSelectWithTelemetry}
           onOpenRating={onOpenRating}
           onToggleWatchlist={onToggleWatchlist}
         />
@@ -129,9 +160,10 @@ export const Dashboard: React.FC<DashboardProps> = ({
           subtitle={section.subtitle}
           reason={section.reason}
           items={section.items}
-          onSelect={onSelectMedia}
+          onSelect={handleSelectWithTelemetry}
           onToggleWatched={onOpenRating}
           onToggleWatchlist={onToggleWatchlist}
+          onNotInterested={user ? handleNotInterested : undefined}
         />
       ))}
     </div>

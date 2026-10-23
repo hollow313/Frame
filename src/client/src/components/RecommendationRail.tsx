@@ -11,6 +11,7 @@ interface RecommendationRailProps {
   onSelect: (item: MediaItem) => void;
   onToggleWatched: (item: MediaItem) => void;
   onToggleWatchlist: (item: MediaItem) => void;
+  onNotInterested?: (item: MediaItem) => void;
 }
 
 export const RecommendationRail: React.FC<RecommendationRailProps> = ({
@@ -21,6 +22,7 @@ export const RecommendationRail: React.FC<RecommendationRailProps> = ({
   onSelect,
   onToggleWatched,
   onToggleWatchlist,
+  onNotInterested,
 }) => {
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -87,6 +89,7 @@ export const RecommendationRail: React.FC<RecommendationRailProps> = ({
               onSelect={onSelect}
               onToggleWatched={onToggleWatched}
               onToggleWatchlist={onToggleWatchlist}
+              onNotInterested={onNotInterested}
             />
           </div>
         ))}
