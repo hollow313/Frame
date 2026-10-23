@@ -338,6 +338,33 @@ export const Settings: React.FC = () => {
     }
   };
 
+  // Vérification automatique du code PIN Simkl toutes les 5 secondes dès qu'un code est généré
+  useEffect(() => {
+    if (!simklPinData?.user_code) return;
+    const timer = setInterval(async () => {
+      try {
+        const res = await api.checkSimklPin(
+          simklPinData.user_code,
+          userSimklClientId.trim() || undefined,
+          simklDeviceCode || simklPinData.device_code || undefined,
+          userSimklClientSecret.trim() || undefined
+        );
+        if (res.authorized) {
+          clearInterval(timer);
+          setSimklPinData(null);
+          setSimklDeviceCode(null);
+          setSimklPinError(null);
+          alert(res.message);
+          await refreshUser();
+        }
+      } catch {
+        // Ignorer pendant le polling automatique
+      }
+    }, 5000);
+
+    return () => clearInterval(timer);
+  }, [simklPinData, simklDeviceCode, userSimklClientId, userSimklClientSecret]);
+
   const handleCheckSimklPin = async () => {
     if (!simklPinData) return;
     setCheckingPin(true);
@@ -1368,10 +1395,10 @@ export const Settings: React.FC = () => {
                   </div>
                 </div>
 
-                {/* Option alternative : PIN Code / Device Flow */}
-                <details className="group p-3.5 rounded-xl bg-dark-850/50 border border-white/5 text-xs">
-                  <summary className="font-bold text-slate-400 hover:text-slate-200 cursor-pointer list-none flex items-center justify-between">
-                    <span>Méthode alternative : Connexion par code PIN (TV / Console / Device flow)</span>
+                {/* Option : PIN Code / Device Flow OAuth 2.0 (ouverte par défaut, sans pop-up réseau local) */}
+                <details open className="group p-3.5 rounded-xl bg-dark-850/50 border border-white/5 text-xs">
+                  <summary className="font-bold text-slate-200 hover:text-white cursor-pointer list-none flex items-center justify-between">
+                    <span>Connexion rapide par code PIN Simkl (OAuth 2.0 Device — Recommandé en réseau local)</span>
                     <span className="text-[10px] text-primary-400 group-open:rotate-180 transition-transform">▼</span>
                   </summary>
                   <div className="mt-3 pt-3 border-t border-white/5 space-y-3">

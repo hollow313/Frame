@@ -205,7 +205,11 @@ export class SimklService {
   /**
    * Démarrer un flux d'authentification par code PIN / Device Code Simkl (compatible OAuth 2.0 /oauth2/device et V1 /oauth/pin)
    */
-  public static async getDevicePin(customClientId?: string, customClientSecret?: string): Promise<{
+  public static async getDevicePin(
+    customClientId?: string,
+    customClientSecret?: string,
+    userId?: number
+  ): Promise<{
     user_code: string;
     verification_url: string;
     expires_in: number;
@@ -214,18 +218,30 @@ export class SimklService {
     device_code?: string;
     isV2?: boolean;
   }> {
-    const clientId = this.getClientId(customClientId);
-    const clientSecret = this.getClientSecret(customClientSecret);
+    let userRow: { simkl_client_id?: string; simkl_client_secret?: string } | undefined;
+    if (userId) {
+      userRow = db
+        .prepare('SELECT simkl_client_id, simkl_client_secret FROM users WHERE id = ?')
+        .get(userId) as any;
+    }
+
+    const clientId = this.getClientId(customClientId || userRow?.simkl_client_id);
+    const clientSecret = this.getClientSecret(customClientSecret || userRow?.simkl_client_secret);
 
     if (!clientId) {
       throw new Error('Veuillez saisir votre Client ID Simkl avant de générer le code PIN.');
     }
 
-    if (!getSetting('SIMKL_CLIENT_ID') && customClientId) {
+    if (customClientId) {
       setSetting('SIMKL_CLIENT_ID', clientId);
     }
-    if (!getSetting('SIMKL_CLIENT_SECRET') && clientSecret) {
+    if (clientSecret) {
       setSetting('SIMKL_CLIENT_SECRET', clientSecret);
+    }
+    if (userId) {
+      db.prepare(
+        'UPDATE users SET simkl_client_id = ?, simkl_client_secret = COALESCE(?, simkl_client_secret) WHERE id = ?'
+      ).run(clientId, clientSecret || null, userId);
     }
 
     // 1. Essayer l'endpoint OAuth 2.0 Device Flow officiel (/oauth2/device)
@@ -247,7 +263,11 @@ export class SimklService {
           return {
             user_code: v2Data.user_code,
             device_code: v2Data.device_code,
-            verification_url: v2Data.verification_uri || v2Data.verification_url || 'https://simkl.com/pin',
+            verification_url:
+              v2Data.verification_uri_complete ||
+              v2Data.verification_uri ||
+              v2Data.verification_url ||
+              `https://simkl.com/pin?user_code=${encodeURIComponent(v2Data.user_code)}`,
             expires_in: v2Data.expires_in || 900,
             interval: v2Data.interval || 5,
             client_id: clientId,
@@ -292,10 +312,18 @@ export class SimklService {
     userCode: string,
     customClientId?: string,
     deviceCode?: string,
-    customClientSecret?: string
+    customClientSecret?: string,
+    userId?: number
   ): Promise<{ result: 'OK' | 'KO'; access_token?: string; refresh_token?: string; message?: string }> {
-    const clientId = this.getClientId(customClientId);
-    const clientSecret = this.getClientSecret(customClientSecret);
+    let userRow: { simkl_client_id?: string; simkl_client_secret?: string } | undefined;
+    if (userId) {
+      userRow = db
+        .prepare('SELECT simkl_client_id, simkl_client_secret FROM users WHERE id = ?')
+        .get(userId) as any;
+    }
+
+    const clientId = this.getClientId(customClientId || userRow?.simkl_client_id);
+    const clientSecret = this.getClientSecret(customClientSecret || userRow?.simkl_client_secret);
     if (!clientId) {
       throw new Error('SIMKL_CLIENT_ID non configuré.');
     }
@@ -334,11 +362,39 @@ export class SimklService {
         if (v2Data.error === 'authorization_pending' || v2Data.error === 'slow_down') {
           return {
             result: 'KO',
-            message: 'En attente de validation du code sur https://simkl.com/pin (cliquez sur « Valider sur Simkl » puis approuvez Frame).',
+            message:
+              'En attente de validation sur Simkl : cliquez sur « 1. Valider sur Simkl », connectez-vous et cliquez sur Approve.',
           };
         }
+
+        if (v2Data.error === 'invalid_client') {
+          return {
+            result: 'KO',
+            message:
+              'Client Secret Simkl requis ou invalide : renseignez votre Client Secret (simkl_cs_...) dans le champ « Client Secret Simkl » ci-dessus, puis réessayez.',
+          };
+        }
+
+        if (v2Data.error === 'expired_token') {
+          return {
+            result: 'KO',
+            message: 'Ce code PIN a expiré. Cliquez à nouveau sur « Générer un code PIN Simkl ».',
+          };
+        }
+
+        // Ne jamais appeler /oauth/pin lorsqu'un deviceCode OAuth 2.0 est utilisé
+        return {
+          result: 'KO',
+          message:
+            v2Data.error_description ||
+            v2Data.message ||
+            'En attente de validation du code sur https://simkl.com/pin',
+        };
       } catch {
-        // Fallback sur la vérification V1
+        return {
+          result: 'KO',
+          message: 'Erreur réseau lors de la vérification sur Simkl. Réessayez dans quelques secondes.',
+        };
       }
     }
 

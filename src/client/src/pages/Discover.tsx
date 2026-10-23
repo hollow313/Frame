@@ -337,11 +337,12 @@ export const Discover: React.FC<DiscoverProps> = ({
               }}
               className="bg-dark-850 border border-white/10 text-slate-200 text-xs rounded-xl px-3 py-1.5 focus:outline-none focus:border-primary-500 font-medium cursor-pointer"
             >
-              <option value="all">Toutes les dates</option>
+              <option value="all">Toutes les dates (Déjà sortis)</option>
+              <option value="upcoming">À venir (Prochaines sorties)</option>
               <option value="7d">7 derniers jours</option>
               <option value="30d">30 derniers jours</option>
               <option value="6m">6 derniers mois</option>
-              <option value="this_year">Cette année (2026)</option>
+              <option value="this_year">Cette année (Déjà sortis)</option>
               <optgroup label="Années spécifiques">
                 <option value="year_2025">2025</option>
                 <option value="year_2024">2024</option>

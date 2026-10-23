@@ -201,7 +201,7 @@ router.get('/pin', async (req: AuthenticatedRequest, res: Response) => {
   try {
     const customClientId = req.query.clientId as string | undefined;
     const customClientSecret = req.query.clientSecret as string | undefined;
-    const pinData = await SimklService.getDevicePin(customClientId, customClientSecret);
+    const pinData = await SimklService.getDevicePin(customClientId, customClientSecret, req.user!.id);
     res.json(pinData);
   } catch (err: any) {
     res.status(400).json({ error: err.message });
@@ -219,15 +219,18 @@ router.post('/pin/check', async (req: AuthenticatedRequest, res: Response) => {
       return;
     }
 
-    const result = await SimklService.checkDevicePin(userCode, clientId, deviceCode, clientSecret);
+    const result = await SimklService.checkDevicePin(userCode, clientId, deviceCode, clientSecret, req.user!.id);
 
     if (result.result === 'OK' && result.access_token) {
-      const validation = await SimklService.validateAccessToken(result.access_token, clientId);
-      const cleanClientId = clientId ? clientId.trim() : SimklService.getClientId();
-      const cleanSecret = clientSecret ? clientSecret.trim() : SimklService.getClientSecret();
+      const userRow = db
+        .prepare('SELECT simkl_client_id, simkl_client_secret FROM users WHERE id = ?')
+        .get(req.user!.id) as any;
+      const cleanClientId = (clientId || userRow?.simkl_client_id || SimklService.getClientId()).trim();
+      const cleanSecret = (clientSecret || userRow?.simkl_client_secret || SimklService.getClientSecret()).trim();
+      const validation = await SimklService.validateAccessToken(result.access_token, cleanClientId);
 
       db.prepare(
-        'UPDATE users SET simkl_token = ?, simkl_refresh_token = COALESCE(?, simkl_refresh_token), simkl_user_id = ?, simkl_client_id = ?, simkl_client_secret = ? WHERE id = ?'
+        'UPDATE users SET simkl_token = ?, simkl_refresh_token = COALESCE(?, simkl_refresh_token), simkl_user_id = ?, simkl_client_id = ?, simkl_client_secret = COALESCE(?, simkl_client_secret) WHERE id = ?'
       ).run(
         result.access_token,
         result.refresh_token || null,

@@ -783,7 +783,7 @@ export class TMDBService {
 
   /**
    * Découverte unifiée (Films, Séries, Mangas/Animés) avec filtres combinables :
-   * Plateforme, Genre, Période de sortie, Tri
+   * Plateforme, Genre, Période de sortie (Déjà sortis vs À venir), Tri
    */
   public static async unifiedDiscover(options: {
     type?: 'all' | 'movie' | 'tv' | 'anime';
@@ -791,7 +791,7 @@ export class TMDBService {
     providerId?: number;
     genreId?: number;
     recentOnly?: boolean;
-    dateFilter?: 'upcoming' | 'this_month' | 'last_3_months' | 'this_year' | 'year' | 'all';
+    dateFilter?: string;
     year?: number;
     sortBy?: 'popularity.desc' | 'release_date.desc' | 'vote_average.desc';
     page?: number;
@@ -802,7 +802,7 @@ export class TMDBService {
       providerId,
       genreId,
       recentOnly = false,
-      dateFilter = recentOnly ? 'last_3_months' : 'all',
+      dateFilter = recentOnly ? '30d' : 'all',
       year,
       sortBy = 'popularity.desc',
       page = 1,
@@ -810,25 +810,38 @@ export class TMDBService {
 
     const today = new Date();
     const todayStr = today.toISOString().split('T')[0];
+    const tomorrowStr = new Date(today.getTime() + 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+    const isUpcomingFilter = dateFilter === 'upcoming';
 
     let startDate: string | undefined;
     let endDate: string | undefined;
 
-    if (dateFilter === 'upcoming') {
-      startDate = todayStr;
-      endDate = new Date(today.getTime() + 180 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
-    } else if (dateFilter === 'this_month') {
-      startDate = new Date(today.getFullYear(), today.getMonth(), 1).toISOString().split('T')[0];
-      endDate = new Date(today.getFullYear(), today.getMonth() + 1, 0).toISOString().split('T')[0];
-    } else if (dateFilter === 'last_3_months') {
-      startDate = new Date(today.getTime() - 120 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
-      endDate = new Date(today.getTime() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+    if (isUpcomingFilter) {
+      startDate = tomorrowStr;
+      endDate = new Date(today.getTime() + 365 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+    } else if (dateFilter === '7d') {
+      startDate = new Date(today.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+      endDate = todayStr;
+    } else if (dateFilter === '30d' || dateFilter === 'this_month') {
+      startDate = new Date(today.getTime() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+      endDate = todayStr;
+    } else if (dateFilter === '6m' || dateFilter === 'last_3_months') {
+      startDate = new Date(today.getTime() - 180 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+      endDate = todayStr;
     } else if (dateFilter === 'this_year') {
       startDate = `${today.getFullYear()}-01-01`;
-      endDate = `${today.getFullYear()}-12-31`;
-    } else if (dateFilter === 'year' && year) {
-      startDate = `${year}-01-01`;
-      endDate = `${year}-12-31`;
+      endDate = todayStr;
+    } else if (dateFilter.startsWith('year_') || ((dateFilter === 'year' || dateFilter === 'custom_year') && year)) {
+      const targetYear = year || parseInt(dateFilter.replace('year_', ''), 10);
+      if (targetYear && !isNaN(targetYear)) {
+        startDate = `${targetYear}-01-01`;
+        endDate = targetYear >= today.getFullYear() ? todayStr : `${targetYear}-12-31`;
+      } else {
+        endDate = todayStr;
+      }
+    } else {
+      // Par défaut ("all" = toutes les œuvres déjà sorties à ce jour, exclut les dates futures 2027-2043)
+      endDate = todayStr;
     }
 
     const buildParams = (mediaType: 'movie' | 'tv', isAnimeMode: boolean): Record<string, string | number> => {
@@ -844,6 +857,9 @@ export class TMDBService {
 
       if (sortBy === 'vote_average.desc') {
         params['vote_count.gte'] = 100;
+      } else if (sortBy === 'release_date.desc' && !isUpcomingFilter) {
+        // Évite les fiches vides/amateur sans affiche ni vote lors du tri par date récente
+        params['vote_count.gte'] = 1;
       }
 
       if (providerId) {
@@ -860,14 +876,12 @@ export class TMDBService {
         params.with_genres = genreId;
       }
 
-      if (startDate && endDate) {
-        if (mediaType === 'movie') {
-          params['primary_release_date.gte'] = startDate;
-          params['primary_release_date.lte'] = endDate;
-        } else {
-          params['first_air_date.gte'] = startDate;
-          params['first_air_date.lte'] = endDate;
-        }
+      if (mediaType === 'movie') {
+        if (startDate) params['primary_release_date.gte'] = startDate;
+        if (endDate) params['primary_release_date.lte'] = endDate;
+      } else {
+        if (startDate) params['first_air_date.gte'] = startDate;
+        if (endDate) params['first_air_date.lte'] = endDate;
       }
 
       return params;
@@ -877,11 +891,10 @@ export class TMDBService {
       const params = buildParams(mediaType, isAnimeMode);
       let data = await this.fetchTMDB<any>(`/discover/${mediaType}`, params);
 
-      if ((!data.results || data.results.length === 0) && startDate) {
+      // Si une période courte (ex: 7j/30j sur une plateforme précise) ne renvoie rien, élargir startDate mais TOUJOURS conserver endDate <= todayStr
+      if ((!data.results || data.results.length === 0) && startDate && !isUpcomingFilter) {
         delete params['primary_release_date.gte'];
-        delete params['primary_release_date.lte'];
         delete params['first_air_date.gte'];
-        delete params['first_air_date.lte'];
         data = await this.fetchTMDB<any>(`/discover/${mediaType}`, params);
       }
 
@@ -890,8 +903,19 @@ export class TMDBService {
         data = await this.fetchTMDB<any>(`/discover/${mediaType}`, params);
       }
 
+      const normalizedList = (data.results || [])
+        .map((item: any) => this.normalizeMedia(item, mediaType))
+        .filter((item: TMDBMediaItem) => {
+          if (!item.release_date) return !isUpcomingFilter;
+          if (isUpcomingFilter) {
+            return item.release_date >= tomorrowStr;
+          }
+          // Ne jamais retourner une œuvre dont la date de sortie est dans le futur lorsqu'on ne filtre pas sur "À venir"
+          return item.release_date <= todayStr;
+        });
+
       return {
-        results: (data.results || []).map((item: any) => this.normalizeMedia(item, mediaType)),
+        results: normalizedList,
         total_pages: data.total_pages || 1,
       };
     };
@@ -926,8 +950,60 @@ export class TMDBService {
   }
 
   /**
+   * Vérifie la vraie date de diffusion d'une série/animé dans la plage [startStr, endStr]
+   * via son next_episode_to_air ou last_episode_to_air afin d'exclure les séries terminées (ex: Bleach)
+   */
+  private static async verifyTvEpisodeInPeriod(
+    rawShow: any,
+    startStr: string,
+    endStr: string
+  ): Promise<TMDBMediaItem | null> {
+    const norm = this.normalizeMedia(rawShow, 'tv');
+    if (norm.release_date && norm.release_date >= startStr && norm.release_date <= endStr) {
+      return norm;
+    }
+
+    try {
+      const details = await this.fetchTMDB<any>(`/tv/${rawShow.id}`);
+      const nextEp = details?.next_episode_to_air;
+      const lastEp = details?.last_episode_to_air;
+
+      if (nextEp?.air_date && nextEp.air_date >= startStr && nextEp.air_date <= endStr) {
+        norm.release_date = nextEp.air_date;
+        norm.next_episode_to_air = {
+          air_date: nextEp.air_date,
+          episode_number: nextEp.episode_number,
+          season_number: nextEp.season_number,
+          name: nextEp.name,
+        };
+        return norm;
+      }
+
+      if (lastEp?.air_date && lastEp.air_date >= startStr && lastEp.air_date <= endStr) {
+        norm.release_date = lastEp.air_date;
+        norm.next_episode_to_air = {
+          air_date: lastEp.air_date,
+          episode_number: lastEp.episode_number,
+          season_number: lastEp.season_number,
+          name: lastEp.name,
+        };
+        return norm;
+      }
+
+      if (details?.first_air_date && details.first_air_date >= startStr && details.first_air_date <= endStr) {
+        norm.release_date = details.first_air_date;
+        return norm;
+      }
+    } catch {
+      // Ignorer en cas d'erreur TMDB sur un show individuel
+    }
+
+    return null;
+  }
+
+  /**
    * Calendrier des prochaines sorties (Films, Séries TV et Animés/Mangas japonais)
-   * Dédupliqué, trié chronologiquement (B-09) et avec résolution des titres CJK (U-05)
+   * Dédupliqué, vérifié épisode par épisode, trié chronologiquement (B-09) et avec résolution des titres CJK (U-05)
    */
   public static async getUpcomingReleases(
     type: 'all' | 'movie' | 'tv' | 'anime' = 'all',
@@ -950,7 +1026,9 @@ export class TMDBService {
           sort_by: 'popularity.desc',
           page,
         }).then((d) => ({
-          items: (d.results || []).map((m: any) => this.normalizeMedia(m, 'movie')),
+          items: (d.results || [])
+            .map((m: any) => this.normalizeMedia(m, 'movie'))
+            .filter((m: TMDBMediaItem) => m.release_date >= startStr && m.release_date <= endStr),
           pages: d.total_pages || 1,
         }))
       );
@@ -965,26 +1043,29 @@ export class TMDBService {
           sort_by: 'popularity.desc',
           page,
         }).then((d) => ({
-          items: (d.results || []).map((t: any) => this.normalizeMedia(t, 'tv')),
+          items: (d.results || [])
+            .map((t: any) => this.normalizeMedia(t, 'tv'))
+            .filter((t: TMDBMediaItem) => t.release_date >= startStr && t.release_date <= endStr),
           pages: d.total_pages || 1,
         })),
         this.fetchTMDB<any>('/discover/tv', {
           'air_date.gte': startStr,
           'air_date.lte': endStr,
           without_genres: '16,10762,10763,10767',
+          with_status: '0|1|2',
           'vote_count.gte': 10,
           sort_by: 'popularity.desc',
           page,
-        }).then((d) => ({
-          items: (d.results || []).map((t: any) => {
-            const norm = this.normalizeMedia(t, 'tv');
-            if (!norm.release_date || norm.release_date < startStr) {
-              norm.release_date = startStr;
-            }
-            return norm;
-          }),
-          pages: d.total_pages || 1,
-        }))
+        }).then(async (d) => {
+          const rawList = (d.results || []).slice(0, 20);
+          const verified = await Promise.all(
+            rawList.map((t: any) => this.verifyTvEpisodeInPeriod(t, startStr, endStr))
+          );
+          return {
+            items: verified.filter((it): it is TMDBMediaItem => it !== null),
+            pages: d.total_pages || 1,
+          };
+        })
       );
     }
 
@@ -1000,7 +1081,9 @@ export class TMDBService {
           sort_by: 'popularity.desc',
           page,
         }).then((d) => ({
-          items: (d.results || []).map((t: any) => this.normalizeMedia(t, 'tv')),
+          items: (d.results || [])
+            .map((t: any) => this.normalizeMedia(t, 'tv'))
+            .filter((t: TMDBMediaItem) => t.release_date >= startStr && t.release_date <= endStr),
           pages: d.total_pages || 1,
         })),
         this.fetchTMDB<any>('/discover/tv', {
@@ -1008,20 +1091,21 @@ export class TMDBService {
           with_origin_country: 'JP',
           with_original_language: 'ja',
           without_genres: '10762',
+          with_status: '0|1|2',
           'air_date.gte': startStr,
           'air_date.lte': endStr,
           sort_by: 'popularity.desc',
           page,
-        }).then((d) => ({
-          items: (d.results || []).map((t: any) => {
-            const norm = this.normalizeMedia(t, 'tv');
-            if (!norm.release_date || norm.release_date < startStr) {
-              norm.release_date = startStr;
-            }
-            return norm;
-          }),
-          pages: d.total_pages || 1,
-        })),
+        }).then(async (d) => {
+          const rawList = (d.results || []).slice(0, 20);
+          const verified = await Promise.all(
+            rawList.map((t: any) => this.verifyTvEpisodeInPeriod(t, startStr, endStr))
+          );
+          return {
+            items: verified.filter((it): it is TMDBMediaItem => it !== null),
+            pages: d.total_pages || 1,
+          };
+        }),
         this.fetchTMDB<any>('/discover/movie', {
           with_genres: 16,
           with_origin_country: 'JP',
@@ -1032,7 +1116,9 @@ export class TMDBService {
           sort_by: 'popularity.desc',
           page,
         }).then((d) => ({
-          items: (d.results || []).map((m: any) => this.normalizeMedia(m, 'movie')),
+          items: (d.results || [])
+            .map((m: any) => this.normalizeMedia(m, 'movie'))
+            .filter((m: TMDBMediaItem) => m.release_date >= startStr && m.release_date <= endStr),
           pages: d.total_pages || 1,
         }))
       );
