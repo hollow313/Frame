@@ -130,7 +130,7 @@ Frame supporte le protocole officiel OAuth 2.0 de Simkl :
 ### 3. Connexion Jellyfin & Suivi en Direct
 
 1. **Serveur Jellyfin** :
-   - Renseignez l'URL locale de votre serveur Jellyfin (ex: `http://192.168.1.200:8096`).
+   - Renseignez l'URL locale de votre serveur Jellyfin (ex: `http://192.168.x.x:8096` ou `http://serveur:8096`).
    - ⚠️ *Important* : N'utilisez pas `localhost` si Frame tourne dans un conteneur Docker, privilégiez l'IP LAN du serveur ou le nom du conteneur.
 2. **Liaison du compte utilisateur** :
    - Vous pouvez vous connecter soit avec vos identifiants Jellyfin habituels, soit avec une **Clé d'API Jellyfin** (Dashboard > Clés d'API > `+` Frame).
@@ -156,7 +156,7 @@ Frame s'interface avec votre instance Overseerr ou Jellyseerr :
 
 Frame s'intègre de manière transparente derrière tout reverse proxy gérant le SSO :
 1. Dans **Paramètres** > **Sécurité & Authentification**, cochez **« Activer l'authentification automatique par en-tête Reverse Proxy »**.
-2. **Proxies de confiance autorisés** : Indiquez l'IP LAN de votre serveur (ex: `192.168.1.200`) ou le sous-réseau de votre reverse proxy.
+2. **Proxies de confiance autorisés** : Indiquez l'IP LAN de votre serveur (ex: `192.168.1.50` ou `192.168.0.0/16`) ou le sous-réseau de votre reverse proxy.
    > 💡 **Prise en charge Docker** : Dès qu'une IP de confiance est renseignée, Frame accepte automatiquement les passerelles de sous-réseaux internes Docker (`172.16.0.0/12`, `192.168.0.0/16`, `10.0.0.0/8`, `127.0.0.0/8`) utilisées par les reverse proxies tournant en conteneur.
 3. **Bypass automatique de la 2e connexion** :
    - Frame recherche automatiquement les en-têtes SSO standards (`Remote-User`, `X-Forwarded-User`, `X-authentik-username`, `X-Auth-Request-User`, `Remote-Email`).
@@ -168,10 +168,10 @@ Frame s'intègre de manière transparente derrière tout reverse proxy gérant l
 
 1. Activez **« Activer la connexion des utilisateurs via LDAP / LLDAP »**.
 2. Renseignez :
-   - **URL LDAP** : `ldap://192.168.1.200:30326` (ou port de votre LLDAP / OpenLDAP).
-   - **Base DN** : `dc=home-lh,dc=ovh`
-   - **Bind DN** : `uid=admin,ou=people,dc=home-lh,dc=ovh`
-   - **Filtre de recherche** : supporte la syntaxe classique avec `{{username}}` ou les filtres de restriction de groupe (ex: `(&(objectClass=person)(memberOf=cn=Frame,ou=groups,dc=home-lh,dc=ovh))`).
+   - **URL LDAP** : `ldap://192.168.x.x:3890` (ou port de votre LLDAP / OpenLDAP).
+   - **Base DN** : `dc=example,dc=com`
+   - **Bind DN** : `uid=admin,ou=people,dc=example,dc=com`
+   - **Filtre de recherche** : supporte la syntaxe classique avec `{{username}}` ou les filtres de restriction de groupe (ex: `(&(objectClass=person)(memberOf=cn=Frame,ou=groups,dc=example,dc=com))`).
 3. Cliquez sur **« Tester LDAP »** pour valider la configuration.
 
 ---
