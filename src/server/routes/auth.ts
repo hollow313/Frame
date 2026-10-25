@@ -5,7 +5,7 @@ import db from '../db/index.js';
 import { generateToken, authenticateToken, requireAdmin, AuthenticatedRequest } from '../middleware/auth.js';
 import { getSetting, setSetting } from '../services/settingsService.js';
 import { LdapService } from '../services/ldapService.js';
-import { getSsoLogoutUrl } from '../middleware/sso.js';
+import { getSsoLogoutUrl, getSsoPortalUrl } from '../middleware/sso.js';
 import { serverError } from '../utils/httpError.js';
 import { logger } from '../utils/logger.js';
 
@@ -69,12 +69,16 @@ router.get('/status', async (req: AuthenticatedRequest, res: Response) => {
     const allowRegistration = !initialized || getSetting('ALLOW_REGISTRATION') === 'true';
     const ldapEnabled = LdapService.isEnabled();
     const ssoEnabled = getSetting('SSO_ENABLED') === 'true';
+    const disableLocalLogin = ssoEnabled && getSetting('SSO_DISABLE_LOCAL_LOGIN') === 'true';
+    const ssoLogoutUrl = ssoEnabled ? getSsoLogoutUrl(req) : null;
+    const ssoPortalUrl = ssoEnabled ? getSsoPortalUrl(req) : null;
 
     res.json({
       initialized,
       allowRegistration,
       ldapEnabled,
       ssoEnabled,
+      disableLocalLogin,
       ssoUser: req.ssoIdentity
         ? {
             username: req.ssoIdentity.username,
@@ -84,7 +88,8 @@ router.get('/status', async (req: AuthenticatedRequest, res: Response) => {
         : null,
       // true si l'utilisateur s'est déconnecté de Frame : pas de reconnexion SSO automatique
       ssoPaused: Boolean(req.cookies && req.cookies.frame_sso_logout === '1'),
-      ssoLogoutUrl: ssoEnabled ? getSsoLogoutUrl() : null,
+      ssoLogoutUrl,
+      ssoPortalUrl,
     });
   } catch (err: any) {
     serverError(res, err, 'AuthStatus');
@@ -253,6 +258,14 @@ router.post('/admin/create-user', authenticateToken, requireAdmin, async (req: A
  */
 router.post('/login', loginLimiter, async (req: Request, res: Response) => {
   try {
+    // Si le SSO est activé et que la connexion locale est désactivée pour empêcher le bruteforce
+    if (getSetting('SSO_ENABLED') === 'true' && getSetting('SSO_DISABLE_LOCAL_LOGIN') === 'true') {
+      res.status(403).json({
+        error: 'La connexion par identifiant/mot de passe local est désactivée. Veuillez passer par le portail SSO.',
+      });
+      return;
+    }
+
     const { username, password } = req.body;
 
     if (!username || !password) {
@@ -446,16 +459,14 @@ router.put('/preferences', authenticateToken, (req: AuthenticatedRequest, res: R
 });
 
 /**
- * Déconnexion : supprime la session Frame et suspend la reconnexion SSO automatique
- * (l'utilisateur peut alors choisir de continuer avec son compte SSO ou se connecter avec un autre compte)
+ * Déconnexion : supprime la session Frame et redirige directement vers le portail SSO si activé
  */
 router.post('/logout', (req: Request, res: Response) => {
   res.clearCookie('frame_token', { path: '/' });
-  res.cookie('frame_sso_logout', '1', {
-    ...getCookieOpts(req),
-    maxAge: 30 * 24 * 60 * 60 * 1000,
-  });
-  res.json({ success: true });
+  res.clearCookie('frame_sso_logout', { path: '/' });
+  const ssoEnabled = getSetting('SSO_ENABLED') === 'true';
+  const redirectUrl = ssoEnabled ? getSsoLogoutUrl(req) : null;
+  res.json({ success: true, redirectUrl });
 });
 
 export default router;

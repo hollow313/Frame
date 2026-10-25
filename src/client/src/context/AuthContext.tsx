@@ -82,12 +82,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const logout = async () => {
     try {
-      await api.logout();
+      const res = await api.logout();
+      setToken(null);
+      setUser(null);
+      if (res?.redirectUrl) {
+        window.location.href = res.redirectUrl;
+        return;
+      }
     } catch (e) {
-      // Ignorer
+      setToken(null);
+      setUser(null);
     }
-    setToken(null);
-    setUser(null);
   };
 
   const refreshUser = async () => {

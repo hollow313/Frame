@@ -91,6 +91,9 @@ router.put('/', authenticateToken, requireAdmin, (req: AuthenticatedRequest, res
       'SSO_ENABLED',
       'SSO_HEADER',
       'SSO_TRUSTED_PROXIES',
+      'SSO_URL',
+      'SSO_LOGOUT_URL',
+      'SSO_DISABLE_LOCAL_LOGIN',
       'INTERNAL_HOSTS_ALLOWLIST',
     ];
 

@@ -30,6 +30,9 @@ export type SettingKey =
   | 'SSO_ENABLED'
   | 'SSO_HEADER'
   | 'SSO_TRUSTED_PROXIES'
+  | 'SSO_URL'
+  | 'SSO_LOGOUT_URL'
+  | 'SSO_DISABLE_LOCAL_LOGIN'
   | 'INTERNAL_HOSTS_ALLOWLIST';
 
 const DATA_DIR = process.env.DATA_DIR || path.resolve(process.cwd(), 'data');
@@ -262,6 +265,9 @@ export function getAllSettingsMasked(): Record<string, { configured: boolean; va
     'SSO_ENABLED',
     'SSO_HEADER',
     'SSO_TRUSTED_PROXIES',
+    'SSO_URL',
+    'SSO_LOGOUT_URL',
+    'SSO_DISABLE_LOCAL_LOGIN',
     'INTERNAL_HOSTS_ALLOWLIST',
   ];
 

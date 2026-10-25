@@ -1,4 +1,4 @@
-import { Response, NextFunction } from 'express';
+import { Request, Response, NextFunction } from 'express';
 import net from 'net';
 import https from 'https';
 import http from 'http';
@@ -266,11 +266,64 @@ async function probeSsoOriginForUser(
   return null;
 }
 
+function extractBaseDomain(req?: Request): string {
+  if (!req) return '';
+  const forwardedHost =
+    (typeof req.headers['x-forwarded-host'] === 'string' && req.headers['x-forwarded-host'].split(',')[0].trim()) ||
+    (typeof req.headers.host === 'string' && req.headers.host.trim()) ||
+    '';
+  const hostWithoutPort = forwardedHost.split(':')[0];
+  if (hostWithoutPort && !net.isIP(hostWithoutPort) && hostWithoutPort.includes('.')) {
+    const parts = hostWithoutPort.split('.');
+    if (parts.length > 2) return parts.slice(1).join('.');
+    return hostWithoutPort;
+  }
+  const ldapBase = getSetting('LDAP_BASE_DN') || '';
+  const dcParts = ldapBase
+    .split(',')
+    .map((p) => p.trim())
+    .filter((p) => /^dc=/i.test(p))
+    .map((p) => p.replace(/^dc=/i, ''));
+  if (dcParts.length >= 2) {
+    return dcParts.join('.');
+  }
+  return '';
+}
+
 /**
- * URL de déconnexion du portail SSO découvert (permet de changer d'utilisateur SSO)
+ * URL du portail SSO (pour redirection de connexion)
  */
-export function getSsoLogoutUrl(): string | null {
-  return discoveredSsoOrigin ? `${discoveredSsoOrigin}/logout` : null;
+export function getSsoPortalUrl(req?: Request): string | null {
+  const customSso = getSetting('SSO_URL');
+  if (customSso && customSso.trim()) {
+    return customSso.trim().replace(/\/+$/, '');
+  }
+  if (discoveredSsoOrigin) {
+    return discoveredSsoOrigin;
+  }
+  const baseDomain = extractBaseDomain(req);
+  if (baseDomain) {
+    const forwardedProto =
+      (req && typeof req.headers['x-forwarded-proto'] === 'string' && req.headers['x-forwarded-proto'].split(',')[0].trim()) ||
+      'https';
+    return `${forwardedProto}://auth.${baseDomain}`;
+  }
+  return null;
+}
+
+/**
+ * URL de déconnexion du portail SSO (permet de terminer la session SSO globale et forcer la reconnexion SSO)
+ */
+export function getSsoLogoutUrl(req?: Request): string | null {
+  const customLogout = getSetting('SSO_LOGOUT_URL');
+  if (customLogout && customLogout.trim()) {
+    return customLogout.trim();
+  }
+  const portalUrl = getSsoPortalUrl(req);
+  if (portalUrl) {
+    return `${portalUrl}/logout`;
+  }
+  return null;
 }
 
 /**

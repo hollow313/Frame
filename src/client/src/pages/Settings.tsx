@@ -65,6 +65,9 @@ export const Settings: React.FC = () => {
   const [ssoEnabled, setSsoEnabled] = useState(false);
   const [ssoHeader, setSsoHeader] = useState('Remote-User');
   const [ssoTrustedProxies, setSsoTrustedProxies] = useState('');
+  const [ssoUrl, setSsoUrl] = useState('');
+  const [ssoLogoutUrl, setSsoLogoutUrl] = useState('');
+  const [ssoDisableLocalLogin, setSsoDisableLocalLogin] = useState(false);
   const [internalHostsAllowlist, setInternalHostsAllowlist] = useState('');
   const [configuredSecrets, setConfiguredSecrets] = useState<Record<string, boolean>>({});
   const [simklStatusInfo, setSimklStatusInfo] = useState<{
@@ -185,6 +188,9 @@ export const Settings: React.FC = () => {
         setSsoEnabled(s.SSO_ENABLED?.value === 'true');
         if (s.SSO_HEADER?.value) setSsoHeader(s.SSO_HEADER.value);
         if (s.SSO_TRUSTED_PROXIES?.value !== undefined) setSsoTrustedProxies(s.SSO_TRUSTED_PROXIES.value || '');
+        if (s.SSO_URL?.value) setSsoUrl(s.SSO_URL.value);
+        if (s.SSO_LOGOUT_URL?.value) setSsoLogoutUrl(s.SSO_LOGOUT_URL.value);
+        setSsoDisableLocalLogin(s.SSO_DISABLE_LOCAL_LOGIN?.value === 'true');
       }
     } catch (e) {
       console.error(e);
@@ -214,6 +220,9 @@ export const Settings: React.FC = () => {
         SSO_ENABLED: ssoEnabled ? 'true' : 'false',
         SSO_HEADER: ssoHeader,
         SSO_TRUSTED_PROXIES: ssoTrustedProxies,
+        SSO_URL: ssoUrl,
+        SSO_LOGOUT_URL: ssoLogoutUrl,
+        SSO_DISABLE_LOCAL_LOGIN: ssoDisableLocalLogin ? 'true' : 'false',
       };
       const cleanTmdb = tmdbKey.replace(/•+/g, '').trim();
       const cleanSeer = seerApiKey.replace(/•+/g, '').trim();
@@ -1129,6 +1138,55 @@ export const Settings: React.FC = () => {
                   <p className="text-[11px] text-amber-400/90 mt-1">
                     ⚠️ Obligatoire pour la sécurité SSO : indiquez l'IP ou le sous-réseau Docker de votre reverse proxy (Traefik/Nginx/Authelia). Sans proxy de confiance défini, l'en-tête SSO est ignoré.
                   </p>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+                  <div>
+                    <label className="text-xs font-medium text-slate-400 block mb-1">URL du portail SSO (optionnel)</label>
+                    <input
+                      type="text"
+                      value={ssoUrl}
+                      onChange={(e) => setSsoUrl(e.target.value)}
+                      placeholder="Ex: https://auth.domaine.fr"
+                      className="w-full bg-dark-850 border border-white/10 rounded-xl px-3 py-2 text-xs text-slate-100"
+                    />
+                    <p className="text-[11px] text-slate-500 mt-1">
+                      Détectée automatiquement si laissée vide.
+                    </p>
+                  </div>
+
+                  <div>
+                    <label className="text-xs font-medium text-slate-400 block mb-1">URL de déconnexion SSO (optionnel)</label>
+                    <input
+                      type="text"
+                      value={ssoLogoutUrl}
+                      onChange={(e) => setSsoLogoutUrl(e.target.value)}
+                      placeholder="Ex: https://auth.domaine.fr/logout"
+                      className="w-full bg-dark-850 border border-white/10 rounded-xl px-3 py-2 text-xs text-slate-100"
+                    />
+                    <p className="text-[11px] text-slate-500 mt-1">
+                      Redirige directement vers le portail SSO lors du clic sur Se déconnecter.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="pt-2 border-t border-white/5">
+                  <label className="flex items-start gap-3 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={ssoDisableLocalLogin}
+                      onChange={(e) => setSsoDisableLocalLogin(e.target.checked)}
+                      className="w-4 h-4 mt-0.5 rounded border-slate-700 bg-dark-850 text-primary-600 focus:ring-0"
+                    />
+                    <div>
+                      <span className="text-xs text-slate-200 font-semibold block">
+                        Désactiver totalement le formulaire de mot de passe local (recommandé si Frame est exposé sur Internet)
+                      </span>
+                      <span className="text-[11px] text-slate-400 block mt-0.5">
+                        Bloque tout risque d'attaque par bruteforce externe sur Frame. Tous les utilisateurs doivent obligatoirement s'authentifier via votre portail SSO.
+                      </span>
+                    </div>
+                  </label>
                 </div>
               </div>
             )}

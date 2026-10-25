@@ -64,9 +64,11 @@ export const api = {
       allowRegistration: boolean;
       ldapEnabled: boolean;
       ssoEnabled: boolean;
+      disableLocalLogin?: boolean;
       ssoUser?: { username: string; displayName?: string; ssoUsername?: string } | null;
       ssoPaused?: boolean;
       ssoLogoutUrl?: string | null;
+      ssoPortalUrl?: string | null;
     }>('/auth/status'),
   loginSso: () =>
     request<{ user: User; token: string }>('/auth/sso', {
@@ -93,7 +95,7 @@ export const api = {
       body: JSON.stringify(payload),
     }),
   getMe: () => request<User>('/auth/me'),
-  logout: () => request<{ success: boolean }>('/auth/logout', { method: 'POST' }),
+  logout: () => request<{ success: boolean; redirectUrl?: string | null }>('/auth/logout', { method: 'POST' }),
 
   // ==================== TMDB ====================
   getTrending: (timeWindow: 'day' | 'week' = 'week', page: number = 1) =>
