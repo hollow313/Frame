@@ -576,13 +576,14 @@ export class SimklService {
     let importedWatchlist = 0;
 
     const insertWatchedStmt = db.prepare(`
-      INSERT INTO watched_items (user_id, tmdb_id, media_type, title, release_date, rating, watched_at, genres, runtime, season_number, episode_number)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO watched_items (user_id, tmdb_id, media_type, title, release_date, rating, watched_at, genres, runtime, season_number, episode_number, watch_count)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(user_id, tmdb_id, media_type, season_number, episode_number) DO UPDATE SET
         rating = COALESCE(excluded.rating, watched_items.rating),
         watched_at = COALESCE(watched_items.watched_at, excluded.watched_at),
         genres = COALESCE(watched_items.genres, excluded.genres),
-        runtime = CASE WHEN watched_items.runtime > 0 THEN watched_items.runtime ELSE excluded.runtime END
+        runtime = CASE WHEN watched_items.runtime > 0 THEN watched_items.runtime ELSE excluded.runtime END,
+        watch_count = MAX(COALESCE(watched_items.watch_count, 1), COALESCE(excluded.watch_count, 1))
     `);
 
     const insertWatchlistStmt = db.prepare(`
@@ -621,6 +622,7 @@ export class SimklService {
 
         if (status === 'completed') {
           const watchedAt = normalizeIsoDate(m.last_watched_at || m.last_watched);
+          const playCount = Math.max(1, Number(m.times_watched || m.plays) || 1);
           insertWatchedStmt.run(
             userId,
             tmdbId,
@@ -632,7 +634,8 @@ export class SimklService {
             null,
             runtime,
             0,
-            0
+            0,
+            playCount
           );
           importedMovies++;
         } else if (status === 'plantowatch' || status === 'watching' || status === 'hold') {
@@ -666,6 +669,7 @@ export class SimklService {
                 for (const epObj of seasonObj.episodes) {
                   const eNum = Number(epObj.number) || 1;
                   const epDate = normalizeIsoDate(epObj.watched_at || watchedAt);
+                  const epPlayCount = Math.max(1, Number(epObj.times_watched || epObj.plays) || 1);
                   insertWatchedStmt.run(
                     userId,
                     tmdbId,
@@ -677,7 +681,8 @@ export class SimklService {
                     null,
                     epRuntime,
                     sNum,
-                    eNum
+                    eNum,
+                    epPlayCount
                   );
                   insertedEpCount++;
                 }
@@ -686,6 +691,7 @@ export class SimklService {
           }
 
           const totalShowRuntime = insertedEpCount > 0 ? 0 : Math.max(1, watchedEpsCount) * epRuntime;
+          const showPlayCount = Math.max(1, Number(s.times_watched || s.plays) || 1);
           insertWatchedStmt.run(
             userId,
             tmdbId,
@@ -697,7 +703,8 @@ export class SimklService {
             null,
             totalShowRuntime,
             0,
-            0
+            0,
+            showPlayCount
           );
           importedShows++;
         }
@@ -776,6 +783,7 @@ export class SimklService {
                 for (const epObj of seasonObj.episodes) {
                   const eNum = Number(epObj.number) || 1;
                   const epDate = normalizeIsoDate(epObj.watched_at || watchedAt);
+                  const epPlayCount = Math.max(1, Number(epObj.times_watched || epObj.plays) || 1);
                   insertWatchedStmt.run(
                     userId,
                     tmdbId,
@@ -787,7 +795,8 @@ export class SimklService {
                     genreJson,
                     epRuntime,
                     sNum,
-                    eNum
+                    eNum,
+                    epPlayCount
                   );
                   insertedAnimeEpCount++;
                 }
@@ -797,6 +806,7 @@ export class SimklService {
             for (const epObj of a.episodes) {
               const eNum = Number(epObj.number || epObj) || 1;
               const epDate = normalizeIsoDate(epObj?.watched_at || watchedAt);
+              const epPlayCount = Math.max(1, Number(epObj?.times_watched || epObj?.plays) || 1);
               insertWatchedStmt.run(
                 userId,
                 tmdbId,
@@ -808,7 +818,8 @@ export class SimklService {
                 genreJson,
                 epRuntime,
                 1,
-                eNum
+                eNum,
+                epPlayCount
               );
               insertedAnimeEpCount++;
             }
@@ -825,7 +836,8 @@ export class SimklService {
                 genreJson,
                 epRuntime,
                 1,
-                eNum
+                eNum,
+                1
               );
               insertedAnimeEpCount++;
             }
@@ -839,6 +851,7 @@ export class SimklService {
             ? epRuntime
             : Math.max(1, watchedEpsCount) * epRuntime;
 
+        const animePlayCount = Math.max(1, Number(a.times_watched || a.plays) || 1);
         insertWatchedStmt.run(
           userId,
           tmdbId,
@@ -850,7 +863,8 @@ export class SimklService {
           genreJson,
           totalAnimeRuntime,
           0,
-          0
+          0,
+          animePlayCount
         );
 
         if (isMangaItem) {

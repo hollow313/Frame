@@ -175,6 +175,11 @@ export const api = {
     request<{ success: boolean; message: string }>(`/media/watched/${mediaType}/${tmdbId}`, {
       method: 'DELETE',
     }),
+  rewatchMedia: (payload: { tmdbId: number; mediaType: MediaType; seasonNumber?: number; episodeNumber?: number }) =>
+    request<{ success: boolean; message: string }>('/media/watched/rewatch', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
   getWatched: (type?: 'movie' | 'tv' | 'anime' | 'manga', sort?: string) =>
     request<WatchedItem[]>(`/media/watched?${type ? `type=${type}&` : ''}${sort ? `sort=${sort}` : ''}`),
 

@@ -106,6 +106,7 @@ export interface WatchedItem {
   review: string | null;
   isAnime?: boolean;
   isManga?: boolean;
+  watch_count?: number;
   watchedEpisodesCount?: number;
   nextEpisode?: { seasonNumber: number; episodeNumber: number } | null;
 }
@@ -231,6 +232,18 @@ export interface PeriodRecap {
   topShows: MediaRecapItem[];
 }
 
+export interface RewatchedMediaItem {
+  tmdbId: number;
+  mediaType: MediaType;
+  title: string;
+  posterPath: string | null;
+  backdropPath: string | null;
+  rewatchCount: number;
+  additionalWatches: number;
+  totalRewatchMinutes: number;
+  isAnime?: boolean;
+}
+
 export interface UserStats {
   // Global Time & Breakdown
   totalWatched: number;
@@ -275,9 +288,11 @@ export interface UserStats {
   // Heatmap 365 Jours
   heatmap: DayActivity[];
 
-  // Genres & Réalisateurs
+  // Genres & Réalisateurs & Revues
   topGenres: { name: string; count: number; minutes: number; percentage: number; color?: string }[];
   topDirectors: TopDirector[];
+  totalRewatchesCount?: number;
+  topRewatched?: RewatchedMediaItem[];
 
   // Récapitulatifs Mensuel & Hebdomadaire
   lastMonthRecap: PeriodRecap;

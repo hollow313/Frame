@@ -559,9 +559,10 @@ export class JellyfinService {
     const insertStmt = db.prepare(`
       INSERT INTO watched_items (
         user_id, tmdb_id, media_type, title, poster_path, backdrop_path,
-        release_date, runtime, overview, watched_at, season_number, episode_number
+        release_date, runtime, overview, watched_at, season_number, episode_number,
+        watch_count
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(user_id, tmdb_id, media_type, season_number, episode_number) DO UPDATE SET
         title = COALESCE(watched_items.title, excluded.title),
         poster_path = COALESCE(watched_items.poster_path, excluded.poster_path),
@@ -569,15 +570,16 @@ export class JellyfinService {
         release_date = COALESCE(watched_items.release_date, excluded.release_date),
         runtime = CASE WHEN watched_items.runtime > 0 THEN watched_items.runtime ELSE excluded.runtime END,
         overview = COALESCE(watched_items.overview, excluded.overview),
-        watched_at = COALESCE(watched_items.watched_at, excluded.watched_at)
+        watched_at = COALESCE(watched_items.watched_at, excluded.watched_at),
+        watch_count = MAX(COALESCE(watched_items.watch_count, 1), COALESCE(excluded.watch_count, 1))
     `);
 
     const nowIso = new Date().toISOString();
     const toEnrich: Array<{ tmdbId: number; mediaType: 'movie' | 'tv' }> = [];
 
-    // 1. Récupérer les films vus avec leurs ProviderIds (Tmdb)
+    // 1. Récupérer les films vus avec leurs ProviderIds (Tmdb) et PlayCount (revues)
     const moviesRes = await fetch(
-      `${url}/Users/${userRow.jellyfin_user_id}/Items?IncludeItemTypes=Movie&Recursive=true&Filters=IsPlayed&Fields=ProviderIds,ProductionYear,PremiereDate,RunTimeTicks,Overview`,
+      `${url}/Users/${userRow.jellyfin_user_id}/Items?IncludeItemTypes=Movie&Recursive=true&Filters=IsPlayed&Fields=ProviderIds,ProductionYear,PremiereDate,RunTimeTicks,Overview,UserData`,
       { headers, redirect: 'manual', signal: AbortSignal.timeout(15000) }
     );
 
@@ -599,6 +601,7 @@ export class JellyfinService {
           const watchedAt = item.UserData?.LastPlayedDate
             ? new Date(item.UserData.LastPlayedDate).toISOString()
             : nowIso;
+          const playCount = Math.max(1, Number(item.UserData?.PlayCount) || 1);
 
           insertStmt.run(
             frameUserId,
@@ -612,7 +615,8 @@ export class JellyfinService {
             item.Overview || null,
             watchedAt,
             0,
-            0
+            0,
+            playCount
           );
           toEnrich.push({ tmdbId, mediaType: 'movie' });
           importedMovies++;
@@ -681,9 +685,9 @@ export class JellyfinService {
       }
     }
 
-    // 3. Récupérer tous les épisodes marqués comme "Lus" (IsPlayed) dans Jellyfin pour cocher chaque épisode vu
+    // 3. Récupérer tous les épisodes marqués comme "Lus" (IsPlayed) dans Jellyfin pour cocher chaque épisode vu (avec PlayCount)
     const episodesRes = await fetch(
-      `${url}/Users/${userRow.jellyfin_user_id}/Items?IncludeItemTypes=Episode&Recursive=true&Filters=IsPlayed&Fields=SeriesId,ParentIndexNumber,IndexNumber,RunTimeTicks`,
+      `${url}/Users/${userRow.jellyfin_user_id}/Items?IncludeItemTypes=Episode&Recursive=true&Filters=IsPlayed&Fields=SeriesId,ParentIndexNumber,IndexNumber,RunTimeTicks,UserData`,
       { headers, redirect: 'manual', signal: AbortSignal.timeout(20000) }
     );
 
@@ -701,8 +705,9 @@ export class JellyfinService {
         const watchedAt = ep.UserData?.LastPlayedDate
           ? new Date(ep.UserData.LastPlayedDate).toISOString()
           : nowIso;
+        const playCount = Math.max(1, Number(ep.UserData?.PlayCount) || 1);
 
-        // Insérer l'épisode individuel (season_number, episode_number)
+        // Insérer l'épisode individuel (season_number, episode_number) avec son PlayCount
         insertStmt.run(
           frameUserId,
           seriesInfo.tmdbId,
@@ -715,7 +720,8 @@ export class JellyfinService {
           seriesInfo.overview,
           watchedAt,
           sNum,
-          eNum
+          eNum,
+          playCount
         );
         importedEpisodes++;
 
@@ -732,7 +738,8 @@ export class JellyfinService {
           seriesInfo.overview,
           watchedAt,
           0,
-          0
+          0,
+          1
         );
 
         if (!countedShows.has(seriesInfo.tmdbId)) {

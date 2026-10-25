@@ -106,14 +106,16 @@ router.post('/watched', async (req: AuthenticatedRequest, res: Response) => {
 
     const explicitWatchedAt = watchedAt ? normalizeIsoDate(watchedAt) : null;
     const defaultWatchedAt = explicitWatchedAt || new Date().toISOString();
+    const isRewatch = req.body.mode === 'rewatch' || req.body.rewatch === true;
+    const initialWatchCount = Math.max(1, parseInt(String(req.body.watchCount || 1), 10) || 1);
 
     const stmt = db.prepare(`
       INSERT INTO watched_items (
         user_id, tmdb_id, media_type, title, poster_path, backdrop_path,
         release_date, genres, overview, rating, review, watched_at,
-        runtime, director, director_image, season_number, episode_number
+        runtime, director, director_image, season_number, episode_number, watch_count
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?)
       ON CONFLICT(user_id, tmdb_id, media_type, season_number, episode_number) DO UPDATE SET
         title = excluded.title,
         poster_path = COALESCE(excluded.poster_path, watched_items.poster_path),
@@ -127,7 +129,11 @@ router.post('/watched', async (req: AuthenticatedRequest, res: Response) => {
         runtime = CASE WHEN excluded.runtime > 0 THEN excluded.runtime ELSE watched_items.runtime END,
         director = COALESCE(excluded.director, watched_items.director),
         director_image = COALESCE(excluded.director_image, watched_items.director_image),
-        genres = COALESCE(excluded.genres, watched_items.genres)
+        genres = COALESCE(excluded.genres, watched_items.genres),
+        watch_count = CASE
+          WHEN ? = 1 THEN watched_items.watch_count + 1
+          ELSE COALESCE(excluded.watch_count, watched_items.watch_count, 1)
+        END
     `);
 
     stmt.run(
@@ -146,7 +152,9 @@ router.post('/watched', async (req: AuthenticatedRequest, res: Response) => {
       finalRuntime,
       finalDirector,
       finalDirectorImage,
-      explicitWatchedAt
+      initialWatchCount,
+      explicitWatchedAt,
+      isRewatch ? 1 : 0
     );
 
     // Si l'élément était dans la Watchlist, le retirer automatiquement
@@ -198,17 +206,23 @@ router.post('/watched/episode', (req: AuthenticatedRequest, res: Response) => {
     const epRuntime = Number(runtime) > 0 ? Number(runtime) : 42;
     const isoWatchedAt = normalizeIsoDate(watchedAt);
     const userId = req.user!.id;
+    const isRewatch = req.body.mode === 'rewatch' || req.body.rewatch === true;
+    const initialWatchCount = Math.max(1, parseInt(String(req.body.watchCount || 1), 10) || 1);
 
     // 1. Insérer l'épisode
     db.prepare(`
       INSERT INTO watched_items (
         user_id, tmdb_id, media_type, title, poster_path, backdrop_path,
-        release_date, genres, watched_at, runtime, season_number, episode_number
+        release_date, genres, watched_at, runtime, season_number, episode_number, watch_count
       )
-      VALUES (?, ?, 'tv', ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, 'tv', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(user_id, tmdb_id, media_type, season_number, episode_number) DO UPDATE SET
         watched_at = COALESCE(watched_items.watched_at, excluded.watched_at),
-        runtime = CASE WHEN excluded.runtime > 0 THEN excluded.runtime ELSE watched_items.runtime END
+        runtime = CASE WHEN excluded.runtime > 0 THEN excluded.runtime ELSE watched_items.runtime END,
+        watch_count = CASE
+          WHEN ? = 1 THEN watched_items.watch_count + 1
+          ELSE COALESCE(excluded.watch_count, watched_items.watch_count, 1)
+        END
     `).run(
       userId,
       tmdbId,
@@ -220,16 +234,18 @@ router.post('/watched/episode', (req: AuthenticatedRequest, res: Response) => {
       isoWatchedAt,
       epRuntime,
       seasonNumber,
-      episodeNumber
+      episodeNumber,
+      initialWatchCount,
+      isRewatch ? 1 : 0
     );
 
     // 2. S'assurer qu'une entrée série (season_number=0, episode_number=0) existe pour l'affichage dans Déjà Vu
     db.prepare(`
       INSERT INTO watched_items (
         user_id, tmdb_id, media_type, title, poster_path, backdrop_path,
-        release_date, genres, watched_at, runtime, season_number, episode_number
+        release_date, genres, watched_at, runtime, season_number, episode_number, watch_count
       )
-      VALUES (?, ?, 'tv', ?, ?, ?, ?, ?, ?, 0, 0, 0)
+      VALUES (?, ?, 'tv', ?, ?, ?, ?, ?, ?, 0, 0, 0, 1)
       ON CONFLICT(user_id, tmdb_id, media_type, season_number, episode_number) DO UPDATE SET
         watched_at = MAX(watched_items.watched_at, excluded.watched_at),
         poster_path = COALESCE(watched_items.poster_path, excluded.poster_path),
@@ -257,6 +273,41 @@ router.post('/watched/episode', (req: AuthenticatedRequest, res: Response) => {
     });
   } catch (err: any) {
     serverError(res, err, 'MediaPostWatchedEpisode');
+  }
+});
+
+/**
+ * 1C. Revoir une œuvre ou un épisode (Incrémenter le compteur de revues +1)
+ */
+router.post('/watched/rewatch', (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const { tmdbId: rawTmdbId, mediaType, seasonNumber: rawSeason, episodeNumber: rawEpisode } = req.body;
+    const tmdbId = validateTmdbId(rawTmdbId);
+    if (!tmdbId || !['movie', 'tv', 'manga'].includes(mediaType)) {
+      res.status(400).json({ error: 'tmdbId et mediaType valides requis.' });
+      return;
+    }
+    const sNum = Number(rawSeason) >= 0 ? Number(rawSeason) : 0;
+    const eNum = Number(rawEpisode) >= 0 ? Number(rawEpisode) : 0;
+    const nowIso = new Date().toISOString();
+
+    const info = db
+      .prepare(`
+        UPDATE watched_items 
+        SET watch_count = COALESCE(watch_count, 1) + 1, watched_at = ?
+        WHERE user_id = ? AND tmdb_id = ? AND media_type = ? AND season_number = ? AND episode_number = ?
+      `)
+      .run(nowIso, req.user!.id, tmdbId, mediaType, sNum, eNum);
+
+    if (info.changes === 0) {
+      res.status(404).json({ error: 'Élément introuvable dans vos médias vus.' });
+      return;
+    }
+
+    notifyMutation(req.user!.id);
+    res.json({ success: true, message: 'Visionnage supplémentaire comptabilisé avec succès !' });
+  } catch (err: any) {
+    serverError(res, err, 'MediaRewatch');
   }
 });
 
@@ -1108,6 +1159,22 @@ router.get('/stats', async (req: AuthenticatedRequest, res: Response) => {
     let tvCount = 0;
     let animeCount = 0;
 
+    // Compteurs et cartes de revues / rewatch
+    let totalRewatchesCount = 0;
+    const rewatchMap = new Map<
+      string,
+      {
+        tmdbId: number;
+        mediaType: string;
+        title: string;
+        posterPath: string | null;
+        backdropPath: string | null;
+        additionalWatches: number;
+        totalRewatchMinutes: number;
+        isAnime: boolean;
+      }
+    >();
+
     // Minutes cumulées en base locale
     let dbMoviesMinutes = 0;
     let dbTvMinutes = 0;
@@ -1185,20 +1252,38 @@ router.get('/stats', async (req: AuthenticatedRequest, res: Response) => {
         else itemMins = 10 * 45;
       }
 
+      const itemWatchCount = Math.max(1, Number(item.watch_count) || 1);
+      const additionalWatches = Math.max(0, itemWatchCount - 1);
+      totalRewatchesCount += additionalWatches;
+
+      if (additionalWatches > 0) {
+        const rKey = `${item.tmdb_id}_${item.media_type}`;
+        rewatchMap.set(rKey, {
+          tmdbId: item.tmdb_id,
+          mediaType: item.media_type,
+          title: item.title,
+          posterPath: item.poster_path,
+          backdropPath: item.backdrop_path,
+          additionalWatches,
+          totalRewatchMinutes: itemMins * additionalWatches,
+          isAnime,
+        });
+      }
+
       if (isAnime) {
         animeCount++;
         if (!hasDetailedEpisodes) {
-          dbAnimeMinutes += itemMins;
-          dbAnimeEpisodesCount += item.media_type === 'movie' ? 1 : Math.max(1, Math.round(itemMins / 24));
+          dbAnimeMinutes += itemMins * itemWatchCount;
+          dbAnimeEpisodesCount += (item.media_type === 'movie' ? 1 : Math.max(1, Math.round(itemMins / 24))) * itemWatchCount;
         }
       } else if (item.media_type === 'movie') {
         moviesCount++;
-        dbMoviesMinutes += itemMins;
+        dbMoviesMinutes += itemMins * itemWatchCount;
       } else {
         tvCount++;
         if (!hasDetailedEpisodes) {
-          dbTvMinutes += itemMins;
-          dbTvEpisodesCount += Math.max(1, Math.round(itemMins / 45));
+          dbTvMinutes += itemMins * itemWatchCount;
+          dbTvEpisodesCount += Math.max(1, Math.round(itemMins / 45)) * itemWatchCount;
         }
       }
 
@@ -1306,13 +1391,36 @@ router.get('/stats', async (req: AuthenticatedRequest, res: Response) => {
       }
       const isAnime = tmdbAnimeMap.get(ep.tmdb_id) ?? isItemAnime(ep, parsedGenres);
       const epMins = Number(ep.runtime) || (isAnime ? 24 : 45);
+      const epWatchCount = Math.max(1, Number(ep.watch_count) || 1);
+      const epAdditional = Math.max(0, epWatchCount - 1);
+      totalRewatchesCount += epAdditional;
+
+      if (epAdditional > 0) {
+        const rKey = `${ep.tmdb_id}_tv`;
+        const existing = rewatchMap.get(rKey);
+        if (existing) {
+          existing.additionalWatches += epAdditional;
+          existing.totalRewatchMinutes += epMins * epAdditional;
+        } else {
+          rewatchMap.set(rKey, {
+            tmdbId: ep.tmdb_id,
+            mediaType: isAnime ? 'manga' : 'tv',
+            title: ep.title,
+            posterPath: ep.poster_path,
+            backdropPath: ep.backdrop_path,
+            additionalWatches: epAdditional,
+            totalRewatchMinutes: epMins * epAdditional,
+            isAnime,
+          });
+        }
+      }
 
       if (isAnime) {
-        dbAnimeMinutes += epMins;
-        dbAnimeEpisodesCount += 1;
+        dbAnimeMinutes += epMins * epWatchCount;
+        dbAnimeEpisodesCount += epWatchCount;
       } else {
-        dbTvMinutes += epMins;
-        dbTvEpisodesCount += 1;
+        dbTvMinutes += epMins * epWatchCount;
+        dbTvEpisodesCount += epWatchCount;
       }
 
       const epDate = ep.watched_at ? new Date(ep.watched_at) : null;
@@ -1720,11 +1828,30 @@ router.get('/stats', async (req: AuthenticatedRequest, res: Response) => {
 
     const daysPassedThisYear = Math.floor((now.getTime() - new Date(currentYear, 0, 1).getTime()) / 86400000) + 1;
 
+    // Calcul du Top 5 des œuvres les plus revues (Films / Séries / Mangas avec le plus de relectures)
+    const topRewatched = Array.from(rewatchMap.values())
+      .filter((r) => r.additionalWatches > 0)
+      .sort((a, b) => b.additionalWatches - a.additionalWatches || b.totalRewatchMinutes - a.totalRewatchMinutes)
+      .slice(0, 5)
+      .map((r) => ({
+        tmdbId: r.tmdbId,
+        mediaType: r.mediaType,
+        title: r.title,
+        posterPath: r.posterPath,
+        backdropPath: r.backdropPath,
+        rewatchCount: r.additionalWatches + 1,
+        additionalWatches: r.additionalWatches,
+        totalRewatchMinutes: r.totalRewatchMinutes,
+        isAnime: r.isAnime,
+      }));
+
     res.json({
       totalWatched: allWatched.length,
       moviesWatched: moviesCount,
       tvWatched: tvCount,
       animeWatched: animeCount,
+      totalRewatchesCount,
+      topRewatched,
       totalMinutes: totalMins,
       totalDays,
       remainingHours,

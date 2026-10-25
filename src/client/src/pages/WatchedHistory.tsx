@@ -24,7 +24,9 @@ import {
   Clapperboard,
   Hourglass,
   Award,
-  ChevronRight
+  ChevronRight,
+  RotateCcw,
+  Repeat
 } from 'lucide-react';
 import { WatchedItem, MediaItem, UserStats, DayActivity } from '../types';
 import { api } from '../services/api';
@@ -141,6 +143,22 @@ export const WatchedHistory: React.FC<WatchedHistoryProps> = ({
       loadStats();
     } catch (e) {
       console.error(e);
+    }
+  };
+
+  const handleRewatch = async (item: WatchedItem) => {
+    try {
+      await api.rewatchMedia({ tmdbId: item.tmdb_id, mediaType: item.media_type });
+      setItems((prev) =>
+        prev.map((i) =>
+          i.tmdb_id === item.tmdb_id && i.media_type === item.media_type
+            ? { ...i, watch_count: (i.watch_count || 1) + 1, watched_at: new Date().toISOString() }
+            : i
+        )
+      );
+      loadStats();
+    } catch (e) {
+      console.error('Erreur rewatch', e);
     }
   };
 
@@ -573,7 +591,11 @@ export const WatchedHistory: React.FC<WatchedHistoryProps> = ({
                       <span className="text-2xl font-black text-white">{stats.totalEpisodes?.toLocaleString()}</span>
                     </div>
                     <span className="text-[11px] text-slate-400">
-                      {stats.finishedEpisodes?.toLocaleString()} finis • {stats.inProgressEpisodes?.toLocaleString()} en cours
+                      {stats.totalRewatchesCount && stats.totalRewatchesCount > 0 ? (
+                        <span>{stats.finishedEpisodes?.toLocaleString()} finis • <strong className="text-emerald-400">+{stats.totalRewatchesCount} revues</strong></span>
+                      ) : (
+                        <span>{stats.finishedEpisodes?.toLocaleString()} finis • {stats.inProgressEpisodes?.toLocaleString()} en cours</span>
+                      )}
                     </span>
                   </div>
 
@@ -1248,6 +1270,97 @@ export const WatchedHistory: React.FC<WatchedHistoryProps> = ({
               </div>
 
               {/* ================================================================= */}
+              {/* SECTION 6 : TOP 5 DES ŒUVRES LES PLUS REVUES (REWATCHES)          */}
+              {/* ================================================================= */}
+              {stats.topRewatched && stats.topRewatched.length > 0 && (
+                <div className="p-6 rounded-3xl bg-dark-900 border border-white/5 space-y-6">
+                  <div className="flex items-center justify-between flex-wrap gap-2">
+                    <div>
+                      <h3 className="text-xl font-black text-white flex items-center gap-2">
+                        <RotateCcw className="w-5 h-5 text-emerald-400" />
+                        <span>Vos œuvres <span className="text-emerald-400">les plus revues</span></span>
+                      </h3>
+                      <p className="text-xs text-slate-400 mt-0.5">
+                        Les films, séries et mangas que vous aimez redécouvrir encore et encore.
+                      </p>
+                    </div>
+                    {stats.totalRewatchesCount && stats.totalRewatchesCount > 0 && (
+                      <span className="px-3 py-1.5 rounded-xl bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 text-xs font-bold flex items-center gap-1.5 shadow-sm">
+                        <Repeat className="w-3.5 h-3.5" />
+                        <span>{stats.totalRewatchesCount} relectures au total</span>
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
+                    {stats.topRewatched.map((item, idx) => {
+                      const posterUrl = getPosterUrl(item.posterPath);
+                      return (
+                        <div
+                          key={`${item.mediaType}-${item.tmdbId}`}
+                          onClick={() => onSelectMedia({
+                            id: item.tmdbId,
+                            media_type: item.mediaType,
+                            title: item.title,
+                            overview: '',
+                            poster_path: posterUrl,
+                            backdrop_path: item.backdropPath,
+                            vote_average: 0,
+                            vote_count: 0,
+                            isWatched: true,
+                          })}
+                          className="p-3.5 rounded-2xl bg-dark-850/80 border border-white/5 hover:border-emerald-500/40 transition-all flex flex-col justify-between group cursor-pointer"
+                        >
+                          <div className="relative aspect-[2/3] rounded-xl overflow-hidden bg-dark-800 border border-white/5 mb-3 shadow">
+                            {posterUrl ? (
+                              <img
+                                src={posterUrl}
+                                alt={item.title}
+                                className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                              />
+                            ) : (
+                              <div className="w-full h-full flex items-center justify-center text-slate-600">
+                                <Film className="w-8 h-8" />
+                              </div>
+                            )}
+
+                            {/* Badge Rang */}
+                            <span className="absolute top-2 left-2 px-2 py-0.5 rounded-md bg-dark-950/80 backdrop-blur-md text-amber-300 text-[10px] font-black border border-amber-500/30 shadow">
+                              № 0{idx + 1}
+                            </span>
+
+                            {/* Badge Type */}
+                            <span className="absolute bottom-2 left-2 px-1.5 py-0.5 rounded-md bg-dark-950/80 backdrop-blur-md text-[9px] font-bold uppercase text-slate-300 border border-white/10">
+                              {item.isAnime ? 'Animé' : item.mediaType === 'movie' ? 'Film' : 'Série'}
+                            </span>
+                          </div>
+
+                          <div className="space-y-1.5">
+                            <h5 className="font-extrabold text-sm text-white truncate group-hover:text-emerald-400 transition-colors" title={item.title}>
+                              {item.title}
+                            </h5>
+                            <div className="flex items-center justify-between text-xs">
+                              <span className="px-2 py-0.5 rounded-md bg-emerald-500/20 text-emerald-300 font-extrabold text-[11px] border border-emerald-500/30">
+                                Vu {item.rewatchCount}x
+                              </span>
+                              <span className="text-[11px] text-slate-400 font-medium">
+                                +{item.additionalWatches} {item.mediaType === 'movie' ? 'revue' + (item.additionalWatches > 1 ? 's' : '') : 'ép.'}
+                              </span>
+                            </div>
+                            {item.totalRewatchMinutes > 0 && (
+                              <p className="text-[10px] text-slate-500 truncate">
+                                ≈ {Math.max(1, Math.round(item.totalRewatchMinutes / 60))}h en relecture
+                              </p>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* ================================================================= */}
               {/* SECTION 6 : RÉCAPITULATIF MENSUEL & HEBDOMADAIRE (RECAPS)         */}
               {/* ================================================================= */}
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -1619,6 +1732,17 @@ export const WatchedHistory: React.FC<WatchedHistoryProps> = ({
                           Animé
                         </span>
                       )}
+
+                      {/* Badge Nb de fois vu (Revues) */}
+                      {item.watch_count && item.watch_count > 1 && (
+                        <span
+                          className="absolute top-1 right-1 text-[9px] font-black px-1.5 py-0.5 rounded-md bg-emerald-500 text-dark-950 shadow flex items-center gap-0.5"
+                          title={`Visionné ${item.watch_count} fois`}
+                        >
+                          <RotateCcw className="w-2.5 h-2.5" />
+                          <span>{item.watch_count}x</span>
+                        </span>
+                      )}
                     </div>
 
                     {/* Info */}
@@ -1643,13 +1767,22 @@ export const WatchedHistory: React.FC<WatchedHistoryProps> = ({
                           >
                             {item.title}
                           </h3>
-                          <button
-                            onClick={() => handleDelete(item)}
-                            className="p-1 rounded text-slate-500 hover:text-rose-400 opacity-0 group-hover:opacity-100 transition-opacity"
-                            title="Retirer des vus"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
+                          <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                            <button
+                              onClick={() => handleRewatch(item)}
+                              className="p-1 rounded text-slate-500 hover:text-emerald-400 transition-colors"
+                              title="Marquer comme revu (+1 visionnage)"
+                            >
+                              <RotateCcw className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              onClick={() => handleDelete(item)}
+                              className="p-1 rounded text-slate-500 hover:text-rose-400 transition-colors"
+                              title="Retirer des vus"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
                         </div>
 
                         <div className="flex flex-wrap items-center gap-2 text-xs text-slate-400 mt-0.5">
@@ -1681,9 +1814,16 @@ export const WatchedHistory: React.FC<WatchedHistoryProps> = ({
                       </div>
 
                       <div className="flex items-center justify-between pt-2 border-t border-white/5 text-xs text-slate-400 mt-2">
-                        <div className="flex items-center gap-1 text-[11px] text-slate-500">
-                          <Calendar className="w-3 h-3" />
-                          <span>{new Date(item.watched_at).toLocaleDateString('fr-FR')}</span>
+                        <div className="flex items-center gap-1.5 text-[11px] text-slate-500">
+                          <div className="flex items-center gap-1">
+                            <Calendar className="w-3 h-3" />
+                            <span>{new Date(item.watched_at).toLocaleDateString('fr-FR')}</span>
+                          </div>
+                          {item.watch_count && item.watch_count > 1 && (
+                            <span className="text-emerald-400 font-bold bg-emerald-500/10 px-1.5 py-0.5 rounded text-[10px]">
+                              Vu {item.watch_count}x
+                            </span>
+                          )}
                         </div>
 
                         <button

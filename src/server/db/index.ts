@@ -89,6 +89,7 @@ export function initDatabase() {
       runtime INTEGER DEFAULT 0,
       director TEXT,
       director_image TEXT,
+      watch_count INTEGER DEFAULT 1,
       UNIQUE(user_id, tmdb_id, media_type, season_number, episode_number),
       FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
     );
@@ -254,6 +255,7 @@ export function initDatabase() {
     'ALTER TABLE watched_items ADD COLUMN director_image TEXT',
     'ALTER TABLE watched_items ADD COLUMN season_number INTEGER DEFAULT 0',
     'ALTER TABLE watched_items ADD COLUMN episode_number INTEGER DEFAULT 0',
+    'ALTER TABLE watched_items ADD COLUMN watch_count INTEGER DEFAULT 1',
   ];
 
   for (const sql of watchedAlterCols) {
@@ -262,6 +264,12 @@ export function initDatabase() {
     } catch {
       // La colonne existe déjà
     }
+  }
+
+  try {
+    db.exec('UPDATE watched_items SET watch_count = 1 WHERE watch_count IS NULL OR watch_count < 1');
+  } catch {
+    // Ignorer
   }
 
   try {
