@@ -19,7 +19,7 @@ router.get('/', async (_req: AuthenticatedRequest, res: Response) => {
 
     const users = db
       .prepare(`
-      SELECT u.id, u.username, u.role, u.display_name, u.auth_provider, u.simkl_token, u.jellyfin_token, u.seer_user_id, u.created_at,
+      SELECT u.id, u.username, u.role, u.display_name, u.auth_provider, u.sso_alias, u.simkl_token, u.jellyfin_token, u.seer_user_id, u.created_at,
              (SELECT COUNT(*) FROM watched_items w WHERE w.user_id = u.id AND w.season_number = 0 AND w.episode_number = 0) AS watched_count,
              (SELECT COUNT(*) FROM watchlist wl WHERE wl.user_id = u.id) AS watchlist_count
       FROM users u
@@ -36,6 +36,7 @@ router.get('/', async (_req: AuthenticatedRequest, res: Response) => {
         display_name: u.display_name || u.username,
         authProvider: u.auth_provider || 'local',
         auth_provider: u.auth_provider || 'local',
+        ssoAlias: u.sso_alias || '',
         simklConnected: Boolean(u.simkl_token),
         jellyfinConnected: Boolean(u.jellyfin_token),
         seerUserId: u.seer_user_id || null,
@@ -75,6 +76,36 @@ router.post('/sync-ldap', async (_req: AuthenticatedRequest, res: Response) => {
     });
   } catch (err: any) {
     serverError(res, err, 'UsersSyncLdap');
+  }
+});
+
+/**
+ * Définir l'identifiant SSO associé à un compte Frame (ex: identifiant Authelia "admin" -> compte "loic")
+ */
+router.put('/:id/sso-alias', (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const targetId = parseInt(req.params.id, 10);
+    const raw = typeof req.body?.ssoAlias === 'string' ? req.body.ssoAlias.trim().toLowerCase() : '';
+
+    if (raw && !/^[a-zA-Z0-9._@-]{1,64}$/.test(raw)) {
+      res.status(400).json({ error: 'Identifiant SSO invalide.' });
+      return;
+    }
+
+    if (raw) {
+      const conflict = db
+        .prepare('SELECT id, username FROM users WHERE lower(sso_alias) = ? AND id != ?')
+        .get(raw, targetId) as { id: number; username: string } | undefined;
+      if (conflict) {
+        res.status(409).json({ error: `Cet identifiant SSO est déjà associé au compte « ${conflict.username} ».` });
+        return;
+      }
+    }
+
+    db.prepare('UPDATE users SET sso_alias = ? WHERE id = ?').run(raw || null, targetId);
+    res.json({ success: true, message: raw ? `Identifiant SSO « ${raw} » associé.` : 'Identifiant SSO retiré.' });
+  } catch (err: any) {
+    serverError(res, err, 'UsersSsoAlias');
   }
 });
 

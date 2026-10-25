@@ -64,19 +64,13 @@ export const api = {
       allowRegistration: boolean;
       ldapEnabled: boolean;
       ssoEnabled: boolean;
-      ssoUser?: { username: string } | null;
-      ssoProfiles?: Array<{
-        id: number;
-        username: string;
-        displayName: string;
-        role: string;
-        authProvider: string;
-      }>;
+      ssoUser?: { username: string; displayName?: string; ssoUsername?: string } | null;
+      ssoPaused?: boolean;
+      ssoLogoutUrl?: string | null;
     }>('/auth/status'),
-  loginSso: (userId?: number) =>
+  loginSso: () =>
     request<{ user: User; token: string }>('/auth/sso', {
       method: 'POST',
-      body: userId ? JSON.stringify({ userId }) : undefined,
     }),
   login: (credentials: { username: string; password: string }) =>
     request<{ user: User; token: string; simklConnected?: boolean; jellyfinConnected?: boolean }>('/auth/login', {
@@ -404,6 +398,11 @@ export const api = {
     request<{ success: boolean; message: string }>(`/users/${id}/role`, {
       method: 'PUT',
       body: JSON.stringify({ role }),
+    }),
+  updateUserSsoAlias: (id: number, ssoAlias: string) =>
+    request<{ success: boolean; message: string }>(`/users/${id}/sso-alias`, {
+      method: 'PUT',
+      body: JSON.stringify({ ssoAlias }),
     }),
   deleteUser: (id: number) =>
     request<{ success: boolean; message: string }>(`/users/${id}`, {

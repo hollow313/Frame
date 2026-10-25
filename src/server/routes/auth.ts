@@ -5,6 +5,7 @@ import db from '../db/index.js';
 import { generateToken, authenticateToken, requireAdmin, AuthenticatedRequest } from '../middleware/auth.js';
 import { getSetting, setSetting } from '../services/settingsService.js';
 import { LdapService } from '../services/ldapService.js';
+import { getSsoLogoutUrl } from '../middleware/sso.js';
 import { serverError } from '../utils/httpError.js';
 import { logger } from '../utils/logger.js';
 
@@ -60,7 +61,7 @@ function validatePasswordStrength(username: string, password: unknown): string |
 router.get('/status', async (req: AuthenticatedRequest, res: Response) => {
   try {
     if (LdapService.isEnabled()) {
-      await LdapService.syncUsersFromLdap();
+      LdapService.syncUsersFromLdap().catch(() => {});
     }
 
     const row = db.prepare('SELECT COUNT(*) as count FROM users').get() as { count: number };
@@ -69,29 +70,21 @@ router.get('/status', async (req: AuthenticatedRequest, res: Response) => {
     const ldapEnabled = LdapService.isEnabled();
     const ssoEnabled = getSetting('SSO_ENABLED') === 'true';
 
-    // Si le SSO est activé (l'accès à Frame est déjà protégé par le portail SSO en amont),
-    // renvoyer la liste des profils (synchronisés depuis le groupe LDAP) pour permettre la sélection de son profil en 1 clic sans ressaisir son mot de passe LDAP
-    let ssoProfiles: Array<{ id: number; username: string; displayName: string; role: string; authProvider: string }> = [];
-    if (ssoEnabled) {
-      const users = db
-        .prepare('SELECT id, username, display_name, role, auth_provider FROM users ORDER BY CASE WHEN role = \'admin\' THEN 0 ELSE 1 END, username ASC')
-        .all() as any[];
-      ssoProfiles = users.map((u) => ({
-        id: u.id,
-        username: u.username,
-        displayName: u.display_name || u.username,
-        role: u.role,
-        authProvider: u.auth_provider || 'local',
-      }));
-    }
-
     res.json({
       initialized,
       allowRegistration,
       ldapEnabled,
       ssoEnabled,
-      ssoUser: req.user ? { username: req.user.username } : null,
-      ssoProfiles,
+      ssoUser: req.ssoIdentity
+        ? {
+            username: req.ssoIdentity.username,
+            displayName: req.ssoIdentity.displayName || req.ssoIdentity.username,
+            ssoUsername: req.ssoIdentity.ssoUsername,
+          }
+        : null,
+      // true si l'utilisateur s'est déconnecté de Frame : pas de reconnexion SSO automatique
+      ssoPaused: Boolean(req.cookies && req.cookies.frame_sso_logout === '1'),
+      ssoLogoutUrl: ssoEnabled ? getSsoLogoutUrl() : null,
     });
   } catch (err: any) {
     serverError(res, err, 'AuthStatus');
@@ -99,21 +92,22 @@ router.get('/status', async (req: AuthenticatedRequest, res: Response) => {
 });
 
 /**
- * Émettre une session JWT complète à partir d'une authentification SSO par proxy de confiance (F-07)
- * ou par sélection de son profil utilisateur après validation du portail SSO en amont.
+ * Émettre une session JWT complète à partir de l'identité SSO du navigateur (F-07)
  */
 router.post('/sso', (req: AuthenticatedRequest, res: Response) => {
   try {
-    if (!req.user) {
+    const identity = req.ssoIdentity;
+    if (!identity) {
       res.status(401).json({ error: 'Aucune session SSO active détectée.' });
       return;
     }
 
-    const token = generateToken(req.user, req.ssoCookieHash);
+    const user = { id: identity.id, username: identity.username, role: identity.role, displayName: identity.displayName };
+    const token = generateToken(user, req.ssoCookieHash, 'sso');
     res.clearCookie('frame_sso_logout', { path: '/' });
     res.cookie('frame_token', token, getCookieOpts(req));
     res.json({
-      user: req.user,
+      user,
       token,
     });
   } catch (err: any) {
@@ -184,7 +178,7 @@ router.post('/register', registerLimiter, async (req: Request, res: Response) =>
       displayName: displayName || username,
     };
 
-    const token = generateToken(newUser);
+    const token = generateToken(newUser, undefined, 'password');
 
     res.cookie('frame_token', token, getCookieOpts(req));
 
@@ -347,9 +341,11 @@ router.post('/login', loginLimiter, async (req: Request, res: Response) => {
         role: userRow.role,
         displayName: userRow.display_name,
       },
-      (req as AuthenticatedRequest).ssoCookieHash
+      undefined,
+      'password'
     );
 
+    res.clearCookie('frame_sso_logout', { path: '/' });
     res.cookie('frame_token', token, getCookieOpts(req));
 
     res.json({
@@ -390,7 +386,8 @@ router.get('/me', authenticateToken, (req: AuthenticatedRequest, res: Response) 
         role: userRow.role,
         displayName: userRow.display_name,
       },
-      req.ssoCookieHash
+      req.ssoCookieHash,
+      req.authSource
     );
     res.cookie('frame_token', freshToken, getCookieOpts(req));
 
@@ -449,11 +446,15 @@ router.put('/preferences', authenticateToken, (req: AuthenticatedRequest, res: R
 });
 
 /**
- * Déconnexion
+ * Déconnexion : supprime la session Frame et suspend la reconnexion SSO automatique
+ * (l'utilisateur peut alors choisir de continuer avec son compte SSO ou se connecter avec un autre compte)
  */
-router.post('/logout', (_req: Request, res: Response) => {
+router.post('/logout', (req: Request, res: Response) => {
   res.clearCookie('frame_token', { path: '/' });
-  res.clearCookie('frame_sso_logout', { path: '/' });
+  res.cookie('frame_sso_logout', '1', {
+    ...getCookieOpts(req),
+    maxAge: 30 * 24 * 60 * 60 * 1000,
+  });
   res.json({ success: true });
 });
 

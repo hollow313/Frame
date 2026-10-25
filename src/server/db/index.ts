@@ -212,6 +212,7 @@ export function initDatabase() {
     'ALTER TABLE users ADD COLUMN pref_include_movies INTEGER DEFAULT 1',
     'ALTER TABLE users ADD COLUMN pref_include_tv INTEGER DEFAULT 1',
     'ALTER TABLE users ADD COLUMN pref_include_anime INTEGER DEFAULT 0',
+    'ALTER TABLE users ADD COLUMN sso_alias TEXT',
   ];
 
   for (const sql of userAlterCols) {

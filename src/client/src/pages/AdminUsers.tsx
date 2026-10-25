@@ -84,6 +84,18 @@ export const AdminUsers: React.FC = () => {
     }
   };
 
+  const handleSsoAliasSave = async (userId: number, value: string, previous: string) => {
+    const clean = value.trim().toLowerCase();
+    if (clean === (previous || '').toLowerCase()) return;
+    try {
+      await api.updateUserSsoAlias(userId, clean);
+      loadUsers();
+    } catch (err: any) {
+      alert(err.message || 'Erreur lors de l\'association SSO');
+      loadUsers();
+    }
+  };
+
   const handleDeleteUser = async (userId: number, username: string) => {
     if (!confirm(`Supprimer définitivement l'utilisateur « ${username} » ainsi que toutes ses données ?`)) return;
     try {
@@ -192,6 +204,18 @@ export const AdminUsers: React.FC = () => {
                 </div>
 
                 <div className="flex items-center gap-3 self-end sm:self-auto">
+                  <input
+                    key={`alias-${u.id}-${u.ssoAlias || ''}`}
+                    type="text"
+                    defaultValue={u.ssoAlias || ''}
+                    placeholder="Identifiant SSO"
+                    title="Identifiant utilisé sur le portail SSO (Authelia / Authentik) pour se connecter automatiquement à ce compte"
+                    onBlur={(e) => handleSsoAliasSave(u.id, e.target.value, u.ssoAlias || '')}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
+                    }}
+                    className="w-32 bg-dark-850 border border-white/10 text-xs rounded-xl px-3 py-1.5 text-slate-200 placeholder-slate-500 focus:outline-none focus:border-primary-500"
+                  />
                   <select
                     value={u.role}
                     disabled={isSelf}

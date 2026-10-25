@@ -14,29 +14,33 @@ export interface AuthenticatedRequest extends Request {
   user?: AuthUser;
   ssoAuthenticated?: boolean;
   ssoCookieHash?: string;
+  ssoIdentity?: AuthUser & { ssoUsername: string };
+  authSource?: 'password' | 'sso';
+}
+
+function loadDbUser(id: number): AuthUser | null {
+  const dbUser = db
+    .prepare('SELECT id, username, role, display_name FROM users WHERE id = ?')
+    .get(id) as { id: number; username: string; role: 'admin' | 'user'; display_name?: string } | undefined;
+  if (!dbUser) return null;
+  return {
+    id: dbUser.id,
+    username: dbUser.username,
+    role: dbUser.role,
+    displayName: dbUser.display_name,
+  };
 }
 
 /**
- * Extrait et valide l'utilisateur courant à partir de l'en-tête/session SSO (si présent), du cookie ou de l'en-tête Authorization,
+ * Extrait et valide l'utilisateur courant à partir du jeton (cookie / Authorization) ou de la session SSO,
  * puis vérifie son existence et son rôle en temps réel dans SQLite (F-05, D-05).
+ *
+ * Priorités :
+ *  1. Jeton issu d'une connexion manuelle (identifiant + mot de passe) : choix explicite de l'utilisateur
+ *  2. Identité SSO du navigateur (User A / User B)
+ *  3. Jeton SSO précédent (invalidé si la session SSO du navigateur a changé)
  */
 export function extractUser(req: AuthenticatedRequest): AuthUser | null {
-  // Si le middleware SSO a explicitement identifié l'utilisateur courant (via en-tête ou cookie SSO),
-  // cet utilisateur prime sur tout éventuel ancien cookie JWT d'un autre compte.
-  if (req.ssoAuthenticated && req.user) {
-    const dbUser = db
-      .prepare('SELECT id, username, role, display_name FROM users WHERE id = ?')
-      .get(req.user.id) as { id: number; username: string; role: 'admin' | 'user'; display_name?: string } | undefined;
-    if (dbUser) {
-      return {
-        id: dbUser.id,
-        username: dbUser.username,
-        role: dbUser.role,
-        displayName: dbUser.display_name,
-      };
-    }
-  }
-
   const authHeader = req.headers['authorization'];
   let token = authHeader && authHeader.startsWith('Bearer ') ? authHeader.split(' ')[1] : null;
 
@@ -44,39 +48,57 @@ export function extractUser(req: AuthenticatedRequest): AuthUser | null {
     token = req.cookies.frame_token;
   }
 
+  let tokenPayload: { id: number; ssoHash?: string; src?: string } | null = null;
   if (token) {
     try {
       const secret = getSetting('JWT_SECRET');
       if (secret) {
-        const payload = jwt.verify(token, secret) as { id: number; ssoHash?: string };
-        // Si la session SSO du navigateur a changé (ex: passage de User A à User B sur le portail SSO),
-        // invalider immédiatement le token de l'ancien utilisateur.
-        if (
-          getSetting('SSO_ENABLED') === 'true' &&
-          payload?.ssoHash &&
-          req.ssoCookieHash &&
-          payload.ssoHash !== req.ssoCookieHash
-        ) {
-          return null;
-        }
+        const payload = jwt.verify(token, secret) as { id: number; ssoHash?: string; src?: string };
         if (payload && typeof payload.id === 'number') {
-          const dbUser = db
-            .prepare('SELECT id, username, role, display_name FROM users WHERE id = ?')
-            .get(payload.id) as { id: number; username: string; role: 'admin' | 'user'; display_name?: string } | undefined;
-
-          if (dbUser) {
-            return {
-              id: dbUser.id,
-              username: dbUser.username,
-              role: dbUser.role,
-              displayName: dbUser.display_name,
-            };
-          }
+          tokenPayload = payload;
         }
       }
     } catch {
-      // Token invalide ou expiré : continuer vers le fallback SSO (req.user)
+      // Token invalide ou expiré
     }
+  }
+
+  // 1. Connexion manuelle explicite : prioritaire sur l'identité SSO
+  if (tokenPayload && tokenPayload.src === 'password') {
+    const u = loadDbUser(tokenPayload.id);
+    if (u) {
+      req.authSource = 'password';
+      return u;
+    }
+  }
+
+  // 2. Identité SSO du navigateur
+  if (req.ssoAuthenticated && req.user) {
+    const u = loadDbUser(req.user.id);
+    if (u) {
+      req.authSource = 'sso';
+      return u;
+    }
+  }
+
+  // 3. Jeton SSO / historique
+  if (tokenPayload) {
+    // Si la session SSO du navigateur a changé (ex: passage de User A à User B sur le portail SSO),
+    // invalider immédiatement le token de l'ancien utilisateur.
+    if (
+      getSetting('SSO_ENABLED') === 'true' &&
+      tokenPayload.ssoHash &&
+      req.ssoCookieHash &&
+      tokenPayload.ssoHash !== req.ssoCookieHash
+    ) {
+      return null;
+    }
+    const u = loadDbUser(tokenPayload.id);
+    if (u) {
+      req.authSource = tokenPayload.src === 'sso' || tokenPayload.ssoHash ? 'sso' : undefined;
+      return u;
+    }
+    return null;
   }
 
   if (req.user) {
@@ -122,7 +144,7 @@ export function requireAdmin(req: AuthenticatedRequest, res: Response, next: Nex
   next();
 }
 
-export function generateToken(user: AuthUser, ssoCookieHash?: string): string {
+export function generateToken(user: AuthUser, ssoCookieHash?: string, src?: 'password' | 'sso'): string {
   const secret = getSetting('JWT_SECRET');
   return jwt.sign(
     {
@@ -130,7 +152,8 @@ export function generateToken(user: AuthUser, ssoCookieHash?: string): string {
       username: user.username,
       role: user.role,
       displayName: user.displayName,
-      ...(ssoCookieHash ? { ssoHash: ssoCookieHash } : {}),
+      ...(ssoCookieHash && src !== 'password' ? { ssoHash: ssoCookieHash } : {}),
+      ...(src ? { src } : {}),
     },
     secret,
     { expiresIn: '365d' }

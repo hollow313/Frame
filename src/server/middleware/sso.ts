@@ -93,42 +93,6 @@ export function hashSsoCookies(externalCookies: string): string {
 }
 
 /**
- * Tente d'extraire un identifiant utilisateur depuis un éventuel cookie JWT (ex: CF_Authorization, Authentik, OIDC)
- */
-function tryDecodeJwtCookie(externalCookies: string): { username: string; displayName: string } | null {
-  const parts = externalCookies.split(';').map((s) => s.trim());
-  for (const part of parts) {
-    const eqIdx = part.indexOf('=');
-    if (eqIdx === -1) continue;
-    const val = part.slice(eqIdx + 1).trim();
-    const jwtParts = val.split('.');
-    if (jwtParts.length === 3 && val.startsWith('eyJ')) {
-      try {
-        const payloadJson = Buffer.from(jwtParts[1], 'base64url').toString('utf8');
-        const payload = JSON.parse(payloadJson);
-        const candidate =
-          payload.preferred_username ||
-          payload.username ||
-          payload.upn ||
-          payload.email ||
-          payload.sub;
-        if (typeof candidate === 'string' && /^[a-zA-Z0-9._@-]{1,64}$/.test(candidate.trim())) {
-          const username = candidate.trim();
-          const displayName =
-            (typeof payload.name === 'string' && payload.name.trim()) ||
-            (typeof payload.display_name === 'string' && payload.display_name.trim()) ||
-            username;
-          return { username, displayName };
-        }
-      } catch {
-        // Pas un JWT JSON valide
-      }
-    }
-  }
-  return null;
-}
-
-/**
  * Effectue une requête HTTP/HTTPS (avec support SNI direct vers l'IP du reverse proxy local pour contourner les soucis DNS/Hairpin Docker)
  */
 function requestSsoEndpoint(options: {
@@ -251,60 +215,62 @@ async function probeSsoOriginForUser(
       )
     );
 
-    for (const r of results) {
-      if (r.status !== 'fulfilled') continue;
-      const { statusCode, headers, body } = r.value;
-      if (statusCode < 200 || statusCode >= 300) continue;
+    const okResponses = results
+      .filter((r): r is PromiseFulfilledResult<{ statusCode: number; headers: http.IncomingHttpHeaders; body: string }> => r.status === 'fulfilled')
+      .map((r) => r.value)
+      .filter((v) => v.statusCode >= 200 && v.statusCode < 300);
 
-      // 1. Vérifier les en-têtes de réponse ForwardAuth (Authelia / Authentik)
-      const headerCandidates = [
-        'remote-user',
-        'x-authentik-username',
-        'x-forwarded-user',
-        'x-auth-request-user',
-        'x-auth-request-preferred-username',
-        'remote-email',
-        'x-authentik-email',
-      ];
-      for (const hc of headerCandidates) {
+    // 1. Priorité absolue aux en-têtes ForwardAuth (Remote-User = identifiant LDAP réel, ex: "hollow")
+    const headerCandidates = [
+      'remote-user',
+      'x-authentik-username',
+      'x-forwarded-user',
+      'x-auth-request-user',
+      'x-auth-request-preferred-username',
+    ];
+    for (const hc of headerCandidates) {
+      for (const { headers } of okResponses) {
         const val = headers[hc];
         const strVal = Array.isArray(val) ? val[0] : val;
         if (typeof strVal === 'string' && /^[a-zA-Z0-9._@-]{1,64}$/.test(strVal.trim())) {
           const rawName = headers['remote-name'] || headers['x-authentik-name'];
-          const displayName =
-            (Array.isArray(rawName) ? rawName[0] : rawName) || strVal.trim();
+          const displayName = (Array.isArray(rawName) ? rawName[0] : rawName) || strVal.trim();
           discoveredSsoOrigin = origin;
           return { username: strVal.trim(), displayName: String(displayName).trim() };
         }
       }
+    }
 
-      // 2. Vérifier le corps JSON (/api/user/info d'Authelia ou /api/v3/core/users/me/ d'Authentik)
-      if (body && body.trim().startsWith('{')) {
-        try {
-          const parsed = JSON.parse(body);
-          const dataObj = parsed?.data || parsed?.user || parsed;
-          const rawUser =
-            dataObj?.username ||
-            dataObj?.preferred_username ||
-            dataObj?.uid ||
-            (Array.isArray(dataObj?.emails) ? dataObj.emails[0] : dataObj?.email);
-          if (typeof rawUser === 'string' && /^[a-zA-Z0-9._@-]{1,64}$/.test(rawUser.trim())) {
-            const displayName =
-              dataObj?.display_name ||
-              dataObj?.name ||
-              dataObj?.cn ||
-              rawUser.trim();
-            discoveredSsoOrigin = origin;
-            return { username: rawUser.trim(), displayName: String(displayName).trim() };
-          }
-        } catch {
-          // Ignorer JSON invalide
+    // 2. Repli : corps JSON (/api/user/info d'Authelia ou /api/v3/core/users/me/ d'Authentik)
+    for (const { body } of okResponses) {
+      if (!body || !body.trim().startsWith('{')) continue;
+      try {
+        const parsed = JSON.parse(body);
+        const dataObj = parsed?.data || parsed?.user || parsed;
+        const rawUser =
+          dataObj?.username ||
+          dataObj?.preferred_username ||
+          dataObj?.uid ||
+          (Array.isArray(dataObj?.emails) ? dataObj.emails[0] : dataObj?.email);
+        if (typeof rawUser === 'string' && /^[a-zA-Z0-9._@-]{1,64}$/.test(rawUser.trim())) {
+          const displayName = dataObj?.display_name || dataObj?.name || dataObj?.cn || rawUser.trim();
+          discoveredSsoOrigin = origin;
+          return { username: rawUser.trim(), displayName: String(displayName).trim() };
         }
+      } catch {
+        // Ignorer JSON invalide
       }
     }
   }
 
   return null;
+}
+
+/**
+ * URL de déconnexion du portail SSO découvert (permet de changer d'utilisateur SSO)
+ */
+export function getSsoLogoutUrl(): string | null {
+  return discoveredSsoOrigin ? `${discoveredSsoOrigin}/logout` : null;
 }
 
 /**
@@ -323,14 +289,7 @@ async function resolveUserFromSsoCookies(
     return { username: cached.username, displayName: cached.displayName };
   }
 
-  // 1. Tester si le cookie est directement un JWT signé contenant le username
-  const jwtIdentity = tryDecodeJwtCookie(externalCookies);
-  if (jwtIdentity) {
-    ssoSessionCache.set(cookieHash, { ...jwtIdentity, expiresAt: now + 2 * 60 * 1000 });
-    return jwtIdentity;
-  }
-
-  // 2. Déterminer le domaine et l'IP du reverse proxy
+  // Déterminer le domaine et l'IP du reverse proxy
   const forwardedHost =
     (typeof req.headers['x-forwarded-host'] === 'string' && req.headers['x-forwarded-host'].split(',')[0].trim()) ||
     (typeof req.headers.host === 'string' && req.headers.host.trim()) ||
@@ -419,6 +378,7 @@ async function resolveUserFromSsoCookies(
       proxyIp
     );
     if (resolved) {
+      logger.info('SSO', `Identité SSO résolue via ${origin} : "${resolved.username}"`);
       ssoSessionCache.set(cookieHash, {
         ...resolved,
         expiresAt: now + 2 * 60 * 1000,
@@ -436,14 +396,23 @@ async function resolveUserFromSsoCookies(
 function attachSsoUserToRequest(req: AuthenticatedRequest, remoteUser: string, remoteName: string): void {
   const localPart = remoteUser.includes('@') ? remoteUser.split('@')[0] : remoteUser;
 
-  // 1. Chercher l'utilisateur correspondant dans SQLite par username, localPart d'email, ou display_name
+  // 1. Alias SSO défini par l'administrateur (ex: identifiant SSO "admin" -> compte Frame "loic")
   let user = db
     .prepare(
-      'SELECT id, username, role, display_name FROM users WHERE lower(username) = lower(?) OR lower(username) = lower(?) OR lower(display_name) = lower(?)'
+      'SELECT id, username, role, display_name FROM users WHERE sso_alias IS NOT NULL AND (lower(sso_alias) = lower(?) OR lower(sso_alias) = lower(?)) ORDER BY id ASC LIMIT 1'
     )
-    .get(remoteUser, localPart, remoteUser) as any;
+    .get(remoteUser, localPart) as any;
 
-  // 2. S'il n'existe pas encore, créer son propre compte (toujours avec le rôle 'user' conformément à F-07)
+  // 2. Sinon, correspondance exacte sur l'identifiant (username ou partie locale de l'email)
+  if (!user) {
+    user = db
+      .prepare(
+        'SELECT id, username, role, display_name FROM users WHERE lower(username) = lower(?) OR lower(username) = lower(?) ORDER BY id ASC LIMIT 1'
+      )
+      .get(remoteUser, localPart) as any;
+  }
+
+  // 3. S'il n'existe pas encore, créer son propre compte (toujours avec le rôle 'user' conformément à F-07)
   if (!user) {
     const dummyHash = bcrypt.hashSync(`sso_managed_${Date.now()}_${Math.random()}`, 10);
     const cleanUsername = localPart.toLowerCase();
@@ -455,6 +424,8 @@ function attachSsoUserToRequest(req: AuthenticatedRequest, remoteUser: string, r
     `)
       .run(cleanUsername, dummyHash, remoteName || cleanUsername);
 
+    logger.info('SSO', `Nouveau compte créé pour l'identité SSO "${remoteUser}"`);
+
     user = {
       id: Number(info.lastInsertRowid),
       username: cleanUsername,
@@ -463,12 +434,21 @@ function attachSsoUserToRequest(req: AuthenticatedRequest, remoteUser: string, r
     };
   }
 
-  req.user = {
+  const identity = {
     id: user.id,
     username: user.username,
     role: user.role,
     displayName: user.display_name,
   };
+  req.ssoIdentity = { ...identity, ssoUsername: remoteUser };
+
+  // Après une déconnexion explicite de Frame, l'identité SSO reste connue (bouton "Continuer en tant que ...")
+  // mais l'utilisateur n'est plus reconnecté automatiquement, afin de pouvoir choisir un autre compte.
+  if (req.cookies && req.cookies.frame_sso_logout === '1') {
+    return;
+  }
+
+  req.user = identity;
   req.ssoAuthenticated = true;
 }
 
@@ -528,7 +508,6 @@ export function ssoMiddleware(req: AuthenticatedRequest, _res: Response, next: N
       'x-amzn-oidc-identity',
       'x-user',
       'auth-user',
-      'remote-name',
     ];
 
     let remoteUser = '';
