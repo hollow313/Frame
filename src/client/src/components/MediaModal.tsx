@@ -93,172 +93,306 @@ export const MediaModal: React.FC<MediaModalProps> = ({
       const ctx = canvas.getContext('2d');
       if (!ctx) return;
 
-      const w = 1000;
-      const h = 560;
+      const w = 1200;
+      const h = 720;
       canvas.width = w;
       canvas.height = h;
 
-      // Fond dégradé cinéma
+      const loadImage = (src?: string | null): Promise<HTMLImageElement | null> => {
+        if (!src) return Promise.resolve(null);
+        return new Promise((resolve) => {
+          const img = new Image();
+          img.crossOrigin = 'anonymous';
+          img.onload = () => resolve(img);
+          img.onerror = () => resolve(null);
+          img.src = src;
+        });
+      };
+
+      const [posterImg, backdropImg] = await Promise.all([
+        loadImage(item.poster_path),
+        loadImage(item.backdrop_path),
+      ]);
+
+      // 1. Fond dégradé cinéma ultra-moderne
       const bgGrad = ctx.createLinearGradient(0, 0, w, h);
-      bgGrad.addColorStop(0, '#090d16');
-      bgGrad.addColorStop(0.6, '#0f172a');
-      bgGrad.addColorStop(1, '#1e1438');
+      bgGrad.addColorStop(0, '#070b14');
+      bgGrad.addColorStop(0.5, '#0c1527');
+      bgGrad.addColorStop(1, '#1a1032');
       ctx.fillStyle = bgGrad;
       ctx.fillRect(0, 0, w, h);
 
-      // Halo
-      const halo = ctx.createRadialGradient(200, 200, 20, 200, 200, 450);
-      halo.addColorStop(0, 'rgba(99, 102, 241, 0.25)');
-      halo.addColorStop(1, 'rgba(99, 102, 241, 0)');
-      ctx.fillStyle = halo;
+      // Si le backdrop est disponible, l'afficher en arrière-plan subtil et tamisé
+      if (backdropImg) {
+        ctx.save();
+        ctx.globalAlpha = 0.22;
+        ctx.drawImage(backdropImg, 0, 0, w, h);
+        ctx.restore();
+      }
+
+      // Halos lumineux d'ambiance
+      const haloLeft = ctx.createRadialGradient(250, 200, 20, 250, 200, 480);
+      haloLeft.addColorStop(0, 'rgba(99, 102, 241, 0.25)');
+      haloLeft.addColorStop(1, 'rgba(99, 102, 241, 0)');
+      ctx.fillStyle = haloLeft;
       ctx.fillRect(0, 0, w, h);
 
-      // Bordure
-      ctx.strokeStyle = 'rgba(255, 255, 255, 0.1)';
-      ctx.lineWidth = 2;
-      ctx.strokeRect(15, 15, w - 30, h - 30);
+      const haloRight = ctx.createRadialGradient(950, 480, 20, 950, 480, 420);
+      haloRight.addColorStop(0, 'rgba(236, 72, 153, 0.18)');
+      haloRight.addColorStop(1, 'rgba(236, 72, 153, 0)');
+      ctx.fillStyle = haloRight;
+      ctx.fillRect(0, 0, w, h);
 
-      // Header Brand
+      // Bordure extérieure avec léger contour
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.08)';
+      ctx.lineWidth = 2;
+      ctx.strokeRect(16, 16, w - 32, h - 32);
+
+      // 2. Header Brand & Type Badge
       ctx.fillStyle = '#6366f1';
       ctx.beginPath();
-      ctx.roundRect(50, 45, 36, 36, 10);
+      ctx.roundRect(50, 40, 38, 38, 10);
       ctx.fill();
 
       ctx.fillStyle = '#ffffff';
       ctx.font = 'bold 22px sans-serif';
-      ctx.fillText('FRAME', 98, 71);
+      ctx.fillText('FRAME', 100, 67);
 
       ctx.fillStyle = '#94a3b8';
-      ctx.font = '13px sans-serif';
-      ctx.fillText('MEDIA INTELLIGENCE & TRACKER', 190, 70);
+      ctx.font = '600 13px sans-serif';
+      ctx.fillText('MEDIA INTELLIGENCE & TRACKER', 190, 66);
 
-      // Poster loading
+      // Badge type à droite
+      const isAnime = item.genres?.some((g: any) => g.id === 16);
+      const typeLabel = item.media_type === 'manga' ? 'MANGA' : isAnime ? 'ANIMÉ' : item.media_type === 'movie' ? 'FILM' : 'SÉRIE TV';
+      const typeColor = item.media_type === 'manga' ? '#ec4899' : isAnime ? '#f59e0b' : item.media_type === 'movie' ? '#6366f1' : '#3b82f6';
+
+      ctx.fillStyle = typeColor;
+      ctx.beginPath();
+      ctx.roundRect(w - 180, 42, 130, 30, 10);
+      ctx.fill();
+
+      ctx.fillStyle = '#ffffff';
+      ctx.font = 'bold 12px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText(typeLabel, w - 115, 62);
+      ctx.textAlign = 'left';
+
+      // 3. Colonne Gauche : Affiche Agrandie HD
       const posterX = 50;
-      const posterY = 110;
-      const posterW = 260;
-      const posterH = 390;
+      const posterY = 105;
+      const posterW = 280;
+      const posterH = 420;
 
-      const drawRemainingDetails = () => {
-        const contentX = 350;
-        let curY = 145;
-
-        // Badge type
-        const isAnime = item.genres?.some((g: any) => g.id === 16);
-        ctx.fillStyle = isAnime ? '#f59e0b' : item.media_type === 'movie' ? '#6366f1' : '#8b5cf6';
+      if (posterImg) {
+        ctx.save();
         ctx.beginPath();
-        ctx.roundRect(contentX, curY - 20, 80, 26, 8);
-        ctx.fill();
+        ctx.roundRect(posterX, posterY, posterW, posterH, 16);
+        ctx.clip();
+        ctx.drawImage(posterImg, posterX, posterY, posterW, posterH);
+        ctx.restore();
 
-        ctx.fillStyle = isAnime ? '#0f172a' : '#ffffff';
-        ctx.font = 'bold 12px sans-serif';
-        ctx.fillText(isAnime ? 'ANIMÉ' : item.media_type === 'movie' ? 'FILM' : 'SÉRIE', contentX + 16, curY - 3);
-
-        if (item.release_date) {
-          ctx.fillStyle = '#94a3b8';
-          ctx.font = '13px sans-serif';
-          ctx.fillText(`Sortie : ${new Date(item.release_date).getFullYear()}`, contentX + 100, curY - 3);
-        }
-
-        if (item.vote_average > 0) {
-          ctx.fillStyle = '#f59e0b';
-          ctx.font = 'bold 14px sans-serif';
-          ctx.fillText(`★ ${item.vote_average.toFixed(1)} / 10`, contentX + 220, curY - 3);
-        }
-
-        // Titre
-        curY += 45;
-        ctx.fillStyle = '#ffffff';
-        ctx.font = 'bold 28px sans-serif';
-        const titleText = item.title.length > 32 ? item.title.substring(0, 30) + '...' : item.title;
-        ctx.fillText(titleText, contentX, curY);
-
-        if (item.tagline) {
-          curY += 28;
-          ctx.fillStyle = '#a5b4fc';
-          ctx.font = 'italic 14px sans-serif';
-          const taglineText = item.tagline.length > 50 ? item.tagline.substring(0, 47) + '...' : item.tagline;
-          ctx.fillText(`« ${taglineText} »`, contentX, curY);
-        }
-
-        // Statut Vu
-        if (item.isWatched) {
-          curY += 35;
-          ctx.fillStyle = 'rgba(16, 185, 129, 0.15)';
-          ctx.beginPath();
-          ctx.roundRect(contentX, curY - 18, 300, 32, 10);
-          ctx.fill();
-          ctx.strokeStyle = 'rgba(16, 185, 129, 0.4)';
-          ctx.stroke();
-
-          ctx.fillStyle = '#34d399';
-          ctx.font = 'bold 13px sans-serif';
-          ctx.fillText(`✓ Visionné ${item.userRating ? `• Note attribuée : ${item.userRating}/10` : ''}`, contentX + 15, curY + 3);
-        }
-
-        // Synopsis court
-        if (item.overview) {
-          curY += 45;
-          ctx.fillStyle = '#cbd5e1';
-          ctx.font = '13px sans-serif';
-          const maxWords = 35;
-          const words = item.overview.split(' ').slice(0, maxWords).join(' ') + '...';
-          const lines = wrapText(ctx, words, 580);
-          lines.slice(0, 3).forEach((line: string, i: number) => {
-            ctx.fillText(line, contentX, curY + i * 20);
-          });
-          curY += lines.slice(0, 3).length * 20;
-        }
-
-        // Genres
-        curY += 35;
-        const genres = (item.genres || []).slice(0, 4);
-        let gx = contentX;
-        genres.forEach((g) => {
-          ctx.fillStyle = 'rgba(255, 255, 255, 0.08)';
-          ctx.beginPath();
-          ctx.roundRect(gx, curY - 14, g.name.length * 8 + 20, 26, 8);
-          ctx.fill();
-
-          ctx.fillStyle = '#cbd5e1';
-          ctx.font = '12px sans-serif';
-          ctx.fillText(g.name, gx + 10, curY + 3);
-          gx += g.name.length * 8 + 30;
-        });
-
-        // Télécharger
-        const link = document.createElement('a');
-        link.download = `frame-${item.title.toLowerCase().replace(/[^a-z0-9]+/g, '-')}.png`;
-        link.href = canvas.toDataURL('image/png');
-        link.click();
-      };
-
-      if (item.poster_path) {
-        const img = new Image();
-        img.crossOrigin = 'anonymous';
-        img.onload = () => {
-          ctx.save();
-          ctx.beginPath();
-          ctx.roundRect(posterX, posterY, posterW, posterH, 16);
-          ctx.clip();
-          ctx.drawImage(img, posterX, posterY, posterW, posterH);
-          ctx.restore();
-          ctx.strokeStyle = 'rgba(255, 255, 255, 0.15)';
-          ctx.lineWidth = 1;
-          ctx.strokeRect(posterX, posterY, posterW, posterH);
-          drawRemainingDetails();
-        };
-        img.onerror = () => {
-          drawPosterFallback(ctx, posterX, posterY, posterW, posterH, item.title);
-          drawRemainingDetails();
-        };
-        img.src = item.poster_path;
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.15)';
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.roundRect(posterX, posterY, posterW, posterH, 16);
+        ctx.stroke();
       } else {
         drawPosterFallback(ctx, posterX, posterY, posterW, posterH, item.title);
-        drawRemainingDetails();
       }
+
+      // Pastille Note TMDB sur l'affiche (Haut Droit)
+      if (item.vote_average > 0) {
+        ctx.fillStyle = 'rgba(15, 23, 42, 0.88)';
+        ctx.beginPath();
+        ctx.roundRect(posterX + posterW - 85, posterY + 12, 73, 28, 8);
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(245, 158, 11, 0.5)';
+        ctx.lineWidth = 1;
+        ctx.stroke();
+
+        ctx.fillStyle = '#f59e0b';
+        ctx.font = 'bold 13px sans-serif';
+        ctx.fillText(`★ ${item.vote_average.toFixed(1)}`, posterX + posterW - 74, posterY + 31);
+      }
+
+      // Badge Statut Personnel en bas de l'affiche
+      if (item.isWatched) {
+        ctx.fillStyle = 'rgba(16, 185, 129, 0.95)';
+        ctx.beginPath();
+        ctx.roundRect(posterX + 12, posterY + posterH - 42, posterW - 24, 30, 8);
+        ctx.fill();
+
+        ctx.fillStyle = '#062817';
+        ctx.font = 'bold 12px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText(
+          `✓ Visionné ${item.userRating ? `• Note : ${item.userRating}/10` : ''}`,
+          posterX + posterW / 2,
+          posterY + posterH - 22
+        );
+        ctx.textAlign = 'left';
+      } else if (item.inWatchlist) {
+        ctx.fillStyle = 'rgba(99, 102, 241, 0.95)';
+        ctx.beginPath();
+        ctx.roundRect(posterX + 12, posterY + posterH - 42, posterW - 24, 30, 8);
+        ctx.fill();
+
+        ctx.fillStyle = '#ffffff';
+        ctx.font = 'bold 12px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText('🔖 Dans ma Watchlist', posterX + posterW / 2, posterY + posterH - 22);
+        ctx.textAlign = 'left';
+      }
+
+      // 4. Colonne Droite : Fiche Détaillée Complète
+      const contentX = 360;
+      let curY = 135;
+
+      // Titre Principal
+      ctx.fillStyle = '#ffffff';
+      ctx.font = 'bold 30px sans-serif';
+      const mainTitle = item.title.length > 38 ? item.title.substring(0, 36) + '...' : item.title;
+      ctx.fillText(mainTitle, contentX, curY);
+
+      // Titre Original ou Tagline
+      if (item.original_title && item.original_title.toLowerCase() !== item.title.toLowerCase()) {
+        curY += 22;
+        ctx.fillStyle = '#94a3b8';
+        ctx.font = '500 13px sans-serif';
+        ctx.fillText(`Titre original : ${item.original_title}`, contentX, curY);
+      }
+
+      if (item.tagline) {
+        curY += 24;
+        ctx.fillStyle = '#a5b4fc';
+        ctx.font = 'italic 14px sans-serif';
+        const tText = item.tagline.length > 60 ? item.tagline.substring(0, 58) + '...' : item.tagline;
+        ctx.fillText(`« ${tText} »`, contentX, curY);
+      }
+
+      // Métadonnées clés (Durée, Réalisateur, Année, Votes)
+      curY += 32;
+      ctx.fillStyle = 'rgba(15, 23, 42, 0.7)';
+      ctx.beginPath();
+      ctx.roundRect(contentX, curY - 18, 790, 42, 10);
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.08)';
+      ctx.lineWidth = 1;
+      ctx.stroke();
+
+      const metaParts: string[] = [];
+      if (item.release_date) {
+        metaParts.push(`📅 ${new Date(item.release_date).getFullYear()}`);
+      }
+      if (item.runtime && item.runtime > 0) {
+        const hrs = Math.floor(item.runtime / 60);
+        const mins = item.runtime % 60;
+        metaParts.push(`⏱ ${hrs > 0 ? `${hrs}h ` : ''}${mins}m`);
+      } else if (item.number_of_seasons) {
+        metaParts.push(`📺 ${item.number_of_seasons} saison${item.number_of_seasons > 1 ? 's' : ''}${item.number_of_episodes ? ` (${item.number_of_episodes} ép.)` : ''}`);
+      }
+      if (item.director) {
+        metaParts.push(`🎬 Réal. : ${item.director}`);
+      }
+      if (item.vote_count && item.vote_count > 0) {
+        metaParts.push(`⭐ ${item.vote_average.toFixed(1)}/10 (${item.vote_count.toLocaleString()} votes)`);
+      }
+
+      ctx.fillStyle = '#e2e8f0';
+      ctx.font = 'bold 13px sans-serif';
+      ctx.fillText(metaParts.join('   •   '), contentX + 16, curY + 8);
+
+      // Badges de Genres
+      curY += 46;
+      const genres = (item.genres || []).slice(0, 6);
+      let gx = contentX;
+      genres.forEach((g) => {
+        const name = typeof g === 'string' ? g : g?.name;
+        if (!name) return;
+        const padW = name.length * 8 + 22;
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.08)';
+        ctx.beginPath();
+        ctx.roundRect(gx, curY - 14, padW, 26, 8);
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.12)';
+        ctx.stroke();
+
+        ctx.fillStyle = '#cbd5e1';
+        ctx.font = '600 12px sans-serif';
+        ctx.fillText(name, gx + 11, curY + 4);
+        gx += padW + 10;
+      });
+
+      // Synopsis complet (sur 3-4 lignes propres)
+      if (item.overview) {
+        curY += 40;
+        ctx.fillStyle = '#94a3b8';
+        ctx.font = 'bold 12px sans-serif';
+        ctx.fillText('SYNOPSIS', contentX, curY);
+
+        curY += 20;
+        ctx.fillStyle = '#cbd5e1';
+        ctx.font = '13px sans-serif';
+        const words = item.overview.split(' ').slice(0, 75).join(' ') + (item.overview.split(' ').length > 75 ? '...' : '');
+        const lines = wrapText(ctx, words, 780);
+        lines.slice(0, 4).forEach((line: string, i: number) => {
+          ctx.fillText(line, contentX, curY + i * 21);
+        });
+        curY += lines.slice(0, 4).length * 21;
+      }
+
+      // Casting Principal (Acteurs & Rôles)
+      if (item.cast && item.cast.length > 0) {
+        curY += 20;
+        ctx.fillStyle = '#94a3b8';
+        ctx.font = 'bold 12px sans-serif';
+        ctx.fillText('CASTING PRINCIPAL', contentX, curY);
+
+        curY += 20;
+        const topCast = item.cast.slice(0, 4);
+        const castText = topCast.map((c) => `${c.name}${c.character ? ` (${c.character})` : ''}`).join('  •  ');
+        ctx.fillStyle = '#e2e8f0';
+        ctx.font = '500 12.5px sans-serif';
+        const castLines = wrapText(ctx, castText, 780);
+        castLines.slice(0, 2).forEach((l: string, i: number) => {
+          ctx.fillText(l, contentX, curY + i * 19);
+        });
+        curY += castLines.slice(0, 2).length * 19;
+      }
+
+      // Disponibilité Streaming si présente
+      if (item.streaming_providers && item.streaming_providers.length > 0) {
+        curY += 16;
+        const provs = item.streaming_providers.slice(0, 4).map((p) => p.provider_name).join(', ');
+        ctx.fillStyle = '#38bdf8';
+        ctx.font = '600 12px sans-serif';
+        ctx.fillText(`📺 Disponible en streaming : ${provs}`, contentX, curY);
+      }
+
+      // 5. Footer Signature
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.08)';
+      ctx.beginPath();
+      ctx.moveTo(50, h - 55);
+      ctx.lineTo(w - 50, h - 55);
+      ctx.stroke();
+
+      ctx.fillStyle = '#64748b';
+      ctx.font = '500 12px sans-serif';
+      ctx.fillText('FRAME • Hub personnel de streaming & cinéma • Partagé depuis Frame', 50, h - 30);
+
+      ctx.textAlign = 'right';
+      ctx.fillText(`https://github.com/hollow313/Frame`, w - 50, h - 30);
+      ctx.textAlign = 'left';
+
+      // Télécharger l'image PNG haute résolution
+      const link = document.createElement('a');
+      link.download = `frame-${item.title.toLowerCase().replace(/[^a-z0-9]+/g, '-')}.png`;
+      link.href = canvas.toDataURL('image/png');
+      link.click();
     } catch (e) {
-      console.error(e);
-      alert('Erreur lors du partage');
+      console.error('Erreur génération image média', e);
+      alert('Impossible de générer la fiche du média pour le moment.');
     } finally {
       setSharingMedia(false);
     }

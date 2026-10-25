@@ -169,7 +169,7 @@ export const WatchedHistory: React.FC<WatchedHistoryProps> = ({
   };
 
   // ==========================================
-  // FONCTION DE PARTAGE : GÉNÉRATION D'IMAGE PNG (CANVAS)
+  // FONCTION DE PARTAGE : GÉNÉRATION D'INFOGRAPHIE COMPLÈTE HD (CANVAS)
   // ==========================================
   const handleShareStats = () => {
     if (!stats) return;
@@ -181,183 +181,548 @@ export const WatchedHistory: React.FC<WatchedHistoryProps> = ({
       if (!ctx) return;
 
       const width = 1200;
-      const height = 675;
+      const height = 1620;
       canvas.width = width;
       canvas.height = height;
 
       // 1. Fond dégradé cinéma ultra-moderne
       const bgGrad = ctx.createLinearGradient(0, 0, width, height);
-      bgGrad.addColorStop(0, '#090d16');
-      bgGrad.addColorStop(0.5, '#0e1726');
-      bgGrad.addColorStop(1, '#1e1035');
+      bgGrad.addColorStop(0, '#060a12');
+      bgGrad.addColorStop(0.3, '#0b1324');
+      bgGrad.addColorStop(0.7, '#13112b');
+      bgGrad.addColorStop(1, '#1f0f35');
       ctx.fillStyle = bgGrad;
       ctx.fillRect(0, 0, width, height);
 
-      // 2. Halo lumineux décoratif (Primary / Indigo)
-      const glow = ctx.createRadialGradient(250, 150, 20, 250, 150, 450);
-      glow.addColorStop(0, 'rgba(99, 102, 241, 0.25)');
-      glow.addColorStop(1, 'rgba(99, 102, 241, 0)');
-      ctx.fillStyle = glow;
+      // Halos lumineux décoratifs d'ambiance
+      const glowTop = ctx.createRadialGradient(250, 150, 20, 250, 150, 450);
+      glowTop.addColorStop(0, 'rgba(99, 102, 241, 0.25)');
+      glowTop.addColorStop(1, 'rgba(99, 102, 241, 0)');
+      ctx.fillStyle = glowTop;
       ctx.fillRect(0, 0, width, height);
 
-      const glowRight = ctx.createRadialGradient(950, 500, 20, 950, 500, 400);
-      glowRight.addColorStop(0, 'rgba(236, 72, 153, 0.2)');
-      glowRight.addColorStop(1, 'rgba(236, 72, 153, 0)');
-      ctx.fillStyle = glowRight;
+      const glowMid = ctx.createRadialGradient(950, 700, 20, 950, 700, 450);
+      glowMid.addColorStop(0, 'rgba(16, 185, 129, 0.18)');
+      glowMid.addColorStop(1, 'rgba(16, 185, 129, 0)');
+      ctx.fillStyle = glowMid;
       ctx.fillRect(0, 0, width, height);
 
-      // Bordure subtile
-      ctx.strokeStyle = 'rgba(255, 255, 255, 0.1)';
+      const glowBottom = ctx.createRadialGradient(300, 1300, 20, 300, 1300, 450);
+      glowBottom.addColorStop(0, 'rgba(236, 72, 153, 0.16)');
+      glowBottom.addColorStop(1, 'rgba(236, 72, 153, 0)');
+      ctx.fillStyle = glowBottom;
+      ctx.fillRect(0, 0, width, height);
+
+      // Bordure extérieure subtile
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.08)';
       ctx.lineWidth = 2;
-      ctx.strokeRect(20, 20, width - 40, height - 40);
+      ctx.strokeRect(16, 16, width - 32, height - 32);
 
-      // 3. Logo & Titre FRAME
+      // 2. Header : Logo, Titre & Profil
       ctx.fillStyle = '#6366f1';
       ctx.beginPath();
-      ctx.roundRect(60, 60, 44, 44, 12);
+      ctx.roundRect(50, 45, 42, 42, 12);
       ctx.fill();
 
       ctx.fillStyle = '#ffffff';
       ctx.font = 'bold 26px sans-serif';
-      ctx.fillText('FRAME', 118, 92);
+      ctx.fillText('FRAME', 106, 76);
 
       ctx.fillStyle = '#94a3b8';
-      ctx.font = '500 15px sans-serif';
-      ctx.fillText('BILAN MULTIMÉDIA & TEMPS DE VISIONNAGE', 230, 91);
+      ctx.font = '600 14px sans-serif';
+      ctx.fillText('BILAN MULTIMÉDIA COMPLET & STATISTIQUES', 220, 75);
 
       const username = user?.displayName || user?.username || 'Cinéphile';
+      const todayStr = new Date().toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' });
       ctx.fillStyle = '#e2e8f0';
-      ctx.font = 'bold 15px sans-serif';
+      ctx.font = 'bold 14px sans-serif';
       ctx.textAlign = 'right';
-      ctx.fillText(`Profil : ${username}`, width - 60, 91);
+      ctx.fillText(`Profil : ${username}   •   ${todayStr}`, width - 50, 75);
       ctx.textAlign = 'left';
 
-      // 4. Ligne séparatrice
+      // Ligne séparatrice
       ctx.strokeStyle = 'rgba(255, 255, 255, 0.08)';
       ctx.beginPath();
-      ctx.moveTo(60, 125);
-      ctx.lineTo(width - 60, 125);
+      ctx.moveTo(50, 110);
+      ctx.lineTo(width - 50, 110);
       ctx.stroke();
 
-      // 5. Bloc KPIs Principaux (3 Cartes)
-      const cardY = 155;
-      const cardHeight = 160;
-      const cardWidth = 335;
-      const spacing = 35;
+      // 3. Section 1 : Grand Bilan du Temps & 3 Piliers (Y: 130 - 370)
+      const topY = 130;
+      const topH = 230;
 
-      // Carte 1: Temps Total Simkl
-      const totalDisplay = (stats.totalDays && stats.totalDays > 0)
-        ? `${stats.totalDays}j ${stats.remainingHours || 0}h ${stats.remainingMinutes || 0}m`
-        : `${stats.totalHours} heures`;
-      drawCard(ctx, 60, cardY, cardWidth, cardHeight, 'TEMPS TOTAL CUMULÉ', totalDisplay, [
-        `📺 Séries : ${stats.tvStats?.days ? `${stats.tvStats.days}j ` : ''}${stats.tvStats?.hours ?? stats.tvHours}h`,
-        `✨ Animés : ${stats.animeStats?.days ? `${stats.animeStats.days}j ` : ''}${stats.animeStats?.hours ?? stats.animeHours}h`,
-        `🎬 Films : ${stats.movieStats?.days ? `${stats.movieStats.days}j ` : ''}${stats.movieStats?.hours ?? stats.moviesHours}h`,
-      ], '#10b981');
-
-      // Carte 2: Cette Année (2026)
-      drawCard(ctx, 60 + cardWidth + spacing, cardY, cardWidth, cardHeight, `CETTE ANNÉE (${stats.currentYear || 2026})`, `${stats.thisYearTotalHours || 0} heures`, [
-        `🎬 Films : ${stats.thisYearMoviesHours || 0}h`,
-        `📺 Séries : ${stats.thisYearTvHours || 0}h`,
-        `✨ Mangas : ${stats.thisYearAnimeHours || 0}h`,
-      ], '#10b981');
-
-      // Carte 3: Œuvres Vues & Note
-      drawCard(ctx, 60 + (cardWidth + spacing) * 2, cardY, cardWidth, cardHeight, 'ŒUVRES VISIONNÉES', `${stats.totalWatched} titres`, [
-        `🎬 ${stats.moviesWatched} films • 📺 ${stats.tvWatched} séries`,
-        `✨ ${stats.animeWatched} animés japonais`,
-        stats.averageRating ? `★ Note moyenne : ${stats.averageRating}/10` : 'Enrichi par Simkl & Jellyfin',
-      ], '#f59e0b');
-
-      // 6. Section inférieure : Top Genres & Timeline
-      const bottomY = 350;
-      const bottomHeight = 230;
-
-      // Cadre Genres
-      ctx.fillStyle = 'rgba(15, 23, 42, 0.6)';
+      // Grand bloc gauche : Temps total cumulé
+      ctx.fillStyle = 'rgba(15, 23, 42, 0.75)';
       ctx.beginPath();
-      ctx.roundRect(60, bottomY, 520, bottomHeight, 16);
+      ctx.roundRect(50, topY, 440, topH, 18);
       ctx.fill();
-      ctx.strokeStyle = 'rgba(255, 255, 255, 0.06)';
+      ctx.strokeStyle = 'rgba(16, 185, 129, 0.3)';
+      ctx.lineWidth = 1;
+      ctx.stroke();
+
+      ctx.fillStyle = '#10b981';
+      ctx.beginPath();
+      ctx.roundRect(75, topY + 22, 10, 10, 5);
+      ctx.fill();
+
+      ctx.fillStyle = '#94a3b8';
+      ctx.font = 'bold 12px sans-serif';
+      ctx.fillText('TEMPS TOTAL DE VISIONNAGE CUMULÉ', 95, topY + 31);
+
+      // Chiffres géants
+      ctx.fillStyle = '#ffffff';
+      ctx.font = 'bold 36px sans-serif';
+      const totalTimeText = `${stats.totalDays}j : ${stats.remainingHours}h : ${stats.remainingMinutes}m`;
+      ctx.fillText(totalTimeText, 75, topY + 85);
+
+      ctx.fillStyle = '#cbd5e1';
+      ctx.font = '500 13px sans-serif';
+      ctx.fillText(`≈ ${stats.totalHours?.toLocaleString()} heures réelles (${stats.totalMinutes?.toLocaleString()} min)`, 75, topY + 120);
+
+      ctx.fillStyle = '#94a3b8';
+      ctx.font = '13px sans-serif';
+      ctx.fillText(`🎬 ${stats.totalWatched} titres au total • Note moyenne : ${stats.averageRating ? `${stats.averageRating}/10` : '—'}`, 75, topY + 155);
+      ctx.fillText(`🏆 Complétion : ${stats.completedTitles || 0} titres terminés (${stats.completionRate || 0}%)`, 75, topY + 185);
+
+      // 3 Cartes Piliers (Droite)
+      const pillarW = 200;
+      const pillarGap = 20;
+      const pStartX = 510;
+
+      const drawPillarCard = (
+        x: number,
+        title: string,
+        icon: string,
+        timeStr: string,
+        pct: number,
+        lines: string[],
+        accent: string
+      ) => {
+        ctx.fillStyle = 'rgba(15, 23, 42, 0.7)';
+        ctx.beginPath();
+        ctx.roundRect(x, topY, pillarW, topH, 18);
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.08)';
+        ctx.stroke();
+
+        ctx.fillStyle = accent;
+        ctx.beginPath();
+        ctx.roundRect(x + 18, topY + 20, 8, 8, 4);
+        ctx.fill();
+
+        ctx.fillStyle = '#e2e8f0';
+        ctx.font = 'bold 12px sans-serif';
+        ctx.fillText(`${icon} ${title}`, x + 34, topY + 28);
+
+        ctx.fillStyle = '#ffffff';
+        ctx.font = 'bold 24px sans-serif';
+        ctx.fillText(timeStr, x + 18, topY + 68);
+
+        ctx.fillStyle = accent;
+        ctx.font = 'bold 12px sans-serif';
+        ctx.fillText(`${pct}% du total`, x + 18, topY + 92);
+
+        ctx.fillStyle = '#94a3b8';
+        ctx.font = '500 12px sans-serif';
+        lines.forEach((l, idx) => {
+          ctx.fillText(l, x + 18, topY + 128 + idx * 24);
+        });
+      };
+
+      drawPillarCard(
+        pStartX,
+        'SÉRIES TV',
+        '📺',
+        `${stats.tvStats?.days || 0}j ${stats.tvStats?.hours || 0}h`,
+        stats.tvStats?.percentage || 0,
+        [
+          `• ${stats.tvStats?.completedCount || 0} séries finies`,
+          `• ${stats.tvStats?.watchingCount || 0} en cours`,
+          `• ${stats.tvStats?.totalEpisodes || 0} épisodes vus`,
+        ],
+        '#3b82f6'
+      );
+
+      drawPillarCard(
+        pStartX + pillarW + pillarGap,
+        'ANIMÉS',
+        '✨',
+        `${stats.animeStats?.days || 0}j ${stats.animeStats?.hours || 0}h`,
+        stats.animeStats?.percentage || 0,
+        [
+          `• ${stats.animeStats?.completedCount || 0} animés finis`,
+          `• ${stats.animeStats?.watchingCount || 0} en cours`,
+          `• ${stats.animeStats?.totalEpisodes || 0} épisodes vus`,
+        ],
+        '#eab308'
+      );
+
+      drawPillarCard(
+        pStartX + (pillarW + pillarGap) * 2,
+        'FILMS',
+        '🎬',
+        `${stats.movieStats?.days || 0}j ${stats.movieStats?.hours || 0}h`,
+        stats.movieStats?.percentage || 0,
+        [
+          `• ${stats.moviesWatched || 0} films vus`,
+          `• ${stats.movieStats?.planToWatchCount || 0} à voir`,
+          `• ${stats.moviesHours || 0}h cumulées`,
+        ],
+        '#ec4899'
+      );
+
+      // 4. Section 2 : Les 6 Métriques Clés Clôturées (Y: 380 - 525)
+      const kpiRowY1 = 380;
+      const kpiRowY2 = 455;
+      const kpiCardW = 346;
+      const kpiCardH = 62;
+      const kpiGapX = 30;
+
+      const drawMiniKpi = (x: number, y: number, label: string, val: string, sub: string, col: string) => {
+        ctx.fillStyle = 'rgba(15, 23, 42, 0.65)';
+        ctx.beginPath();
+        ctx.roundRect(x, y, kpiCardW, kpiCardH, 14);
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.06)';
+        ctx.stroke();
+
+        ctx.fillStyle = '#94a3b8';
+        ctx.font = 'bold 10.5px sans-serif';
+        ctx.fillText(label.toUpperCase(), x + 16, y + 22);
+
+        ctx.fillStyle = col;
+        ctx.font = 'bold 18px sans-serif';
+        ctx.fillText(val, x + 16, y + 48);
+
+        ctx.fillStyle = '#64748b';
+        ctx.font = '500 11px sans-serif';
+        ctx.textAlign = 'right';
+        ctx.fillText(sub, x + kpiCardW - 14, y + 47);
+        ctx.textAlign = 'left';
+      };
+
+      // Ligne 1
+      drawMiniKpi(50, kpiRowY1, 'Titres Suivis', String(stats.titlesTracked), `${stats.completedTitles} terminés • ${stats.completionRate}%`, '#ffffff');
+      drawMiniKpi(50 + kpiCardW + kpiGapX, kpiRowY1, 'Épisodes Vus', stats.totalEpisodes ? stats.totalEpisodes.toLocaleString() : '0', `${stats.finishedEpisodes || 0} finis${stats.totalRewatchesCount ? ` • +${stats.totalRewatchesCount} revues` : ''}`, '#ffffff');
+      drawMiniKpi(50 + (kpiCardW + kpiGapX) * 2, kpiRowY1, 'Note Moyenne', stats.averageRating ? `${stats.averageRating} / 10` : '—', `sur ${stats.ratingCount || 0} notes`, '#f59e0b');
+
+      // Ligne 2
+      drawMiniKpi(50, kpiRowY2, 'Série Record (Streak)', `${stats.longestStreak || 0} Jours`, `Actuelle : ${stats.currentStreak || 0} j`, '#10b981');
+      drawMiniKpi(50 + kpiCardW + kpiGapX, kpiRowY2, 'Jour Favori', stats.topWeekday || '—', stats.topWeekdayAvgFormatted || '—', '#e2e8f0');
+      drawMiniKpi(50 + (kpiCardW + kpiGapX) * 2, kpiRowY2, '30 Derniers Jours', `${stats.last30DaysHours || 0} h`, `sur ${stats.last30DaysActiveDays || 0} jours actifs`, '#38bdf8');
+
+      // 5. Section 3 : Top 5 des Œuvres les Plus Revues (Rewatches) (Y: 535 - 745)
+      const rewatchY = 535;
+      const rewatchH = 210;
+
+      ctx.fillStyle = 'rgba(15, 23, 42, 0.7)';
+      ctx.beginPath();
+      ctx.roundRect(50, rewatchY, width - 100, rewatchH, 18);
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(16, 185, 129, 0.2)';
       ctx.stroke();
 
       ctx.fillStyle = '#ffffff';
-      ctx.font = 'bold 18px sans-serif';
-      ctx.fillText('🎯 Genres Préférés', 85, bottomY + 38);
+      ctx.font = 'bold 16px sans-serif';
+      ctx.fillText('🔄 Vos Œuvres les Plus Revues (Top Relectures & Rewatches)', 75, rewatchY + 34);
 
-      const genresToDisplay = (stats.topGenres || []).slice(0, 4);
-      if (genresToDisplay.length > 0) {
-        genresToDisplay.forEach((g, idx) => {
-          const rowY = bottomY + 75 + idx * 36;
-          ctx.fillStyle = '#e2e8f0';
+      if (stats.totalRewatchesCount && stats.totalRewatchesCount > 0) {
+        ctx.fillStyle = '#10b981';
+        ctx.font = 'bold 12px sans-serif';
+        ctx.textAlign = 'right';
+        ctx.fillText(`+${stats.totalRewatchesCount} relectures au total`, width - 75, rewatchY + 34);
+        ctx.textAlign = 'left';
+      }
+
+      const topRew = stats.topRewatched || [];
+      if (topRew.length > 0) {
+        const itemW = 200;
+        const itemGap = 20;
+        topRew.slice(0, 5).forEach((item, idx) => {
+          const ix = 75 + idx * (itemW + itemGap);
+          const iy = rewatchY + 55;
+          const ih = 135;
+
+          ctx.fillStyle = 'rgba(30, 41, 59, 0.6)';
+          ctx.beginPath();
+          ctx.roundRect(ix, iy, itemW, ih, 12);
+          ctx.fill();
+          ctx.strokeStyle = 'rgba(255, 255, 255, 0.08)';
+          ctx.stroke();
+
+          // Rang
+          ctx.fillStyle = '#f59e0b';
+          ctx.font = 'bold 11px sans-serif';
+          ctx.fillText(`№ 0${idx + 1}`, ix + 12, iy + 24);
+
+          // Badge Type
+          const tName = item.isAnime ? 'ANIMÉ' : item.mediaType === 'movie' ? 'FILM' : 'SÉRIE';
+          ctx.fillStyle = '#64748b';
+          ctx.font = 'bold 10px sans-serif';
+          ctx.textAlign = 'right';
+          ctx.fillText(tName, ix + itemW - 12, iy + 24);
+          ctx.textAlign = 'left';
+
+          // Titre
+          ctx.fillStyle = '#ffffff';
+          ctx.font = 'bold 13px sans-serif';
+          const tTrunc = item.title.length > 18 ? item.title.slice(0, 16) + '...' : item.title;
+          ctx.fillText(tTrunc, ix + 12, iy + 52);
+
+          // Badge Vu X fois
+          ctx.fillStyle = 'rgba(16, 185, 129, 0.2)';
+          ctx.beginPath();
+          ctx.roundRect(ix + 12, iy + 68, 90, 22, 6);
+          ctx.fill();
+          ctx.fillStyle = '#34d399';
+          ctx.font = 'bold 11px sans-serif';
+          ctx.fillText(`Vu ${item.rewatchCount}x`, ix + 20, iy + 83);
+
+          ctx.fillStyle = '#94a3b8';
+          ctx.font = '500 11px sans-serif';
+          ctx.fillText(`+${item.additionalWatches} revues`, ix + 110, iy + 83);
+
+          if (item.totalRewatchMinutes > 0) {
+            ctx.fillStyle = '#64748b';
+            ctx.font = '500 11px sans-serif';
+            ctx.fillText(`≈ ${Math.max(1, Math.round(item.totalRewatchMinutes / 60))}h en relecture`, ix + 12, iy + 115);
+          }
+        });
+      } else {
+        ctx.fillStyle = '#64748b';
+        ctx.font = '13px sans-serif';
+        ctx.fillText('Vos œuvres et épisodes revus plusieurs fois apparaîtront ici automatiquement.', 75, rewatchY + 110);
+      }
+
+      // 6. Section 4 : Top Réalisateurs & Top Genres (Y: 765 - 1055)
+      const sec4Y = 765;
+      const sec4H = 280;
+      const colW = 535;
+
+      // Cadre Réalisateurs (Gauche)
+      ctx.fillStyle = 'rgba(15, 23, 42, 0.7)';
+      ctx.beginPath();
+      ctx.roundRect(50, sec4Y, colW, sec4H, 18);
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.08)';
+      ctx.stroke();
+
+      ctx.fillStyle = '#ffffff';
+      ctx.font = 'bold 16px sans-serif';
+      ctx.fillText('🎬 Réalisateurs les Plus Vus', 75, sec4Y + 36);
+
+      const topDirs = (stats.topDirectors || []).slice(0, 4);
+      if (topDirs.length > 0) {
+        topDirs.forEach((dir, idx) => {
+          const dy = sec4Y + 75 + idx * 48;
+          ctx.fillStyle = '#f59e0b';
+          ctx.font = 'bold 12px sans-serif';
+          ctx.fillText(`№ 0${idx + 1}`, 75, dy);
+
+          ctx.fillStyle = '#f1f5f9';
           ctx.font = 'bold 14px sans-serif';
-          ctx.fillText(g.name, 85, rowY);
+          ctx.fillText(dir.name, 125, dy);
+
+          ctx.fillStyle = '#94a3b8';
+          ctx.font = '500 12px sans-serif';
+          ctx.textAlign = 'right';
+          ctx.fillText(`${dir.count} films • ${dir.hours} h`, 50 + colW - 25, dy);
+          ctx.textAlign = 'left';
+
+          if (dir.sampleTitle) {
+            ctx.fillStyle = '#64748b';
+            ctx.font = 'italic 11px sans-serif';
+            const sTitle = dir.sampleTitle.length > 32 ? dir.sampleTitle.slice(0, 30) + '...' : dir.sampleTitle;
+            ctx.fillText(`Ex : ${sTitle}`, 125, dy + 18);
+          }
+        });
+      } else {
+        ctx.fillStyle = '#64748b';
+        ctx.font = '13px sans-serif';
+        ctx.fillText('Les cinéastes apparaîtront au fil de vos visionnages de films.', 75, sec4Y + 120);
+      }
+
+      // Cadre Genres (Droite)
+      const gx = 615;
+      ctx.fillStyle = 'rgba(15, 23, 42, 0.7)';
+      ctx.beginPath();
+      ctx.roundRect(gx, sec4Y, colW, sec4H, 18);
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.08)';
+      ctx.stroke();
+
+      ctx.fillStyle = '#ffffff';
+      ctx.font = 'bold 16px sans-serif';
+      ctx.fillText('🎯 Genres Préférés', gx + 25, sec4Y + 36);
+
+      const topG = (stats.topGenres || []).slice(0, 5);
+      if (topG.length > 0) {
+        topG.forEach((g, idx) => {
+          const gy = sec4Y + 70 + idx * 40;
+          ctx.fillStyle = '#e2e8f0';
+          ctx.font = 'bold 13px sans-serif';
+          ctx.fillText(g.name, gx + 25, gy);
 
           // Barre de progression
-          const barX = 220;
-          const maxBarW = 270;
-          const barW = Math.max(15, Math.min(maxBarW, (g.percentage / 100) * maxBarW));
+          const barX = gx + 170;
+          const maxBarW = 220;
+          const barW = Math.max(12, Math.min(maxBarW, (g.percentage / 100) * maxBarW));
 
           ctx.fillStyle = 'rgba(255, 255, 255, 0.08)';
           ctx.beginPath();
-          ctx.roundRect(barX, rowY - 12, maxBarW, 14, 7);
+          ctx.roundRect(barX, gy - 12, maxBarW, 14, 7);
           ctx.fill();
 
-          ctx.fillStyle = idx === 0 ? '#6366f1' : idx === 1 ? '#8b5cf6' : idx === 2 ? '#ec4899' : '#10b981';
+          ctx.fillStyle = idx === 0 ? '#6366f1' : idx === 1 ? '#8b5cf6' : idx === 2 ? '#ec4899' : idx === 3 ? '#10b981' : '#f59e0b';
           ctx.beginPath();
-          ctx.roundRect(barX, rowY - 12, barW, 14, 7);
+          ctx.roundRect(barX, gy - 12, barW, 14, 7);
           ctx.fill();
 
           ctx.fillStyle = '#94a3b8';
           ctx.font = '600 12px sans-serif';
-          ctx.fillText(`${g.percentage}% (${g.count})`, barX + maxBarW + 10, rowY);
+          ctx.fillText(`${g.percentage}% (${g.count})`, barX + maxBarW + 12, gy);
         });
       } else {
         ctx.fillStyle = '#64748b';
-        ctx.font = '14px sans-serif';
-        ctx.fillText('Synchronisez votre historique pour voir vos genres favoris.', 85, bottomY + 80);
+        ctx.font = '13px sans-serif';
+        ctx.fillText('Historique des genres en attente de synchronisation.', gx + 25, sec4Y + 120);
       }
 
-      // Cadre Quand ai-je regardé ? (Chronologie)
-      ctx.fillStyle = 'rgba(15, 23, 42, 0.6)';
+      // 7. Section 5 : Bilan de l'Année 2026 & Chronologie Récente (Y: 1065 - 1325)
+      const sec5Y = 1065;
+      const sec5H = 250;
+
+      // Bilan Année en cours (Gauche)
+      ctx.fillStyle = 'rgba(15, 23, 42, 0.7)';
       ctx.beginPath();
-      ctx.roundRect(615, bottomY, 525, bottomHeight, 16);
+      ctx.roundRect(50, sec5Y, colW, sec5H, 18);
       ctx.fill();
-      ctx.strokeStyle = 'rgba(255, 255, 255, 0.06)';
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.08)';
       ctx.stroke();
 
       ctx.fillStyle = '#ffffff';
-      ctx.font = 'bold 18px sans-serif';
-      ctx.fillText('📅 Quand ai-je regardé ?', 640, bottomY + 38);
+      ctx.font = 'bold 16px sans-serif';
+      ctx.fillText(`📅 Bilan de Cette Année (${stats.currentYear || 2026})`, 75, sec5Y + 36);
+
+      ctx.fillStyle = '#10b981';
+      ctx.font = 'bold 28px sans-serif';
+      ctx.fillText(`${stats.thisYearTotalHours || 0} Heures de Visionnage`, 75, sec5Y + 80);
+
+      ctx.fillStyle = '#cbd5e1';
+      ctx.font = '500 13px sans-serif';
+      ctx.fillText(`🎬 Films : ${stats.thisYearMoviesHours || 0}h (${stats.moviesWatched} vus)`, 75, sec5Y + 115);
+      ctx.fillText(`📺 Séries TV : ${stats.thisYearTvHours || 0}h`, 75, sec5Y + 142);
+      ctx.fillText(`✨ Animés & Mangas : ${stats.thisYearAnimeHours || 0}h`, 75, sec5Y + 169);
+      ctx.fillText(`📆 Jours avec visionnage : ${stats.watchDaysThisYear || 0} / ${stats.daysPassedThisYear || 0} jours`, 75, sec5Y + 196);
+      ctx.fillText(`🔥 Titres visionnés sur l'année : ${stats.thisYearWatchedCount || 0} œuvres`, 75, sec5Y + 223);
+
+      // Chronologie des Derniers Mois (Droite)
+      ctx.fillStyle = 'rgba(15, 23, 42, 0.7)';
+      ctx.beginPath();
+      ctx.roundRect(gx, sec5Y, colW, sec5H, 18);
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.08)';
+      ctx.stroke();
+
+      ctx.fillStyle = '#ffffff';
+      ctx.font = 'bold 16px sans-serif';
+      ctx.fillText('📊 Chronologie des Derniers Mois', gx + 25, sec5Y + 36);
 
       const timelineItems = (stats.timeline || []).slice(0, 4);
       if (timelineItems.length > 0) {
         timelineItems.forEach((t, idx) => {
-          const rowY = bottomY + 75 + idx * 36;
+          const ty = sec5Y + 76 + idx * 42;
           ctx.fillStyle = '#f8fafc';
-          ctx.font = 'bold 14px sans-serif';
-          ctx.fillText(t.label, 640, rowY);
+          ctx.font = 'bold 13.5px sans-serif';
+          ctx.fillText(t.label, gx + 25, ty);
 
           ctx.fillStyle = '#38bdf8';
-          ctx.font = '600 13px sans-serif';
-          ctx.fillText(`${t.count} visionnage${t.count > 1 ? 's' : ''}`, 830, rowY);
+          ctx.font = '600 12.5px sans-serif';
+          ctx.fillText(`${t.count} visionnage${t.count > 1 ? 's' : ''}`, gx + 175, ty);
 
-          ctx.fillStyle = '#94a3b8';
-          ctx.font = '12px sans-serif';
-          ctx.fillText(`(${t.movies} films, ${t.tv} séries, ${t.anime} mangas)`, 960, rowY);
+          ctx.fillStyle = '#64748b';
+          ctx.font = '11.5px sans-serif';
+          ctx.fillText(`(${t.movies}f, ${t.tv}s, ${t.anime}m)`, gx + 330, ty);
         });
       } else {
         ctx.fillStyle = '#64748b';
-        ctx.font = '14px sans-serif';
-        ctx.fillText('Aucun historique temporel disponible.', 640, bottomY + 80);
+        ctx.font = '13px sans-serif';
+        ctx.fillText('Aucun historique mensuel enregistré.', gx + 25, sec5Y + 120);
       }
 
-      // 7. Footer
-      ctx.fillStyle = '#64748b';
-      ctx.font = '12px sans-serif';
-      ctx.fillText('FRAME • Media Intelligence & Tracker • https://github.com/hollow313/Frame', 60, height - 30);
+      // 8. Section 6 : File d'Attente & Records Personnels (Y: 1335 - 1495)
+      const sec6Y = 1335;
+      const sec6H = 150;
+      const cardW3 = 346;
 
-      // Télécharger le canvas en PNG
+      const drawFooterKpi = (x: number, title: string, bigVal: string, sub1: string, sub2: string, col: string) => {
+        ctx.fillStyle = 'rgba(15, 23, 42, 0.7)';
+        ctx.beginPath();
+        ctx.roundRect(x, sec6Y, cardW3, sec6H, 18);
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.08)';
+        ctx.stroke();
+
+        ctx.fillStyle = '#94a3b8';
+        ctx.font = 'bold 11px sans-serif';
+        ctx.fillText(title, x + 20, sec6Y + 28);
+
+        ctx.fillStyle = col;
+        ctx.font = 'bold 24px sans-serif';
+        ctx.fillText(bigVal, x + 20, sec6Y + 66);
+
+        ctx.fillStyle = '#cbd5e1';
+        ctx.font = '500 12px sans-serif';
+        ctx.fillText(sub1, x + 20, sec6Y + 98);
+
+        ctx.fillStyle = '#64748b';
+        ctx.font = '11px sans-serif';
+        ctx.fillText(sub2, x + 20, sec6Y + 124);
+      };
+
+      drawFooterKpi(
+        50,
+        '🔖 FILE D\'ATTENTE (WATCHLIST)',
+        `${stats.backlogTitlesCount || 0} Titres à voir`,
+        `≈ ${stats.backlogDays || 0} jours de visionnage cumulé`,
+        'Enregistré dans votre liste personnelle',
+        '#818cf8'
+      );
+
+      drawFooterKpi(
+        50 + cardW3 + kpiGapX,
+        '🏆 ANNÉE PIC HISTORIQUE',
+        stats.peakYear ? String(stats.peakYear) : '—',
+        `${stats.peakYearHours || 0} heures cumulées`,
+        'Votre record annuel absolu de visionnage',
+        '#f59e0b'
+      );
+
+      drawFooterKpi(
+        50 + (cardW3 + kpiGapX) * 2,
+        '🌟 COMPLÉTION DES SÉRIES',
+        `${stats.completionRate || 0}% de Réussite`,
+        `${stats.completedTitles || 0} œuvres entièrement achevées`,
+        `${stats.finishedEpisodes || 0} épisodes clôturés avec succès`,
+        '#10b981'
+      );
+
+      // 9. Footer Signature
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.08)';
+      ctx.beginPath();
+      ctx.moveTo(50, height - 60);
+      ctx.lineTo(width - 50, height - 60);
+      ctx.stroke();
+
+      ctx.fillStyle = '#64748b';
+      ctx.font = '500 12px sans-serif';
+      ctx.fillText('FRAME • Hub Intelligent de Streaming, Recommandations & Bilan Multimédia', 50, height - 32);
+
+      ctx.textAlign = 'right';
+      ctx.fillText(`Partagé depuis Frame • https://github.com/hollow313/Frame`, width - 50, height - 32);
+      ctx.textAlign = 'left';
+
+      // Télécharger le canvas en image PNG haute résolution
       const link = document.createElement('a');
       link.download = `frame-stats-${user?.username || 'visionnage'}.png`;
       link.href = canvas.toDataURL('image/png');
@@ -368,49 +733,6 @@ export const WatchedHistory: React.FC<WatchedHistoryProps> = ({
     } finally {
       setGeneratingShare(false);
     }
-  };
-
-  const drawCard = (
-    ctx: CanvasRenderingContext2D,
-    x: number,
-    y: number,
-    w: number,
-    h: number,
-    title: string,
-    kpi: string,
-    details: string[],
-    accentColor: string
-  ) => {
-    ctx.fillStyle = 'rgba(15, 23, 42, 0.75)';
-    ctx.beginPath();
-    ctx.roundRect(x, y, w, h, 16);
-    ctx.fill();
-
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.08)';
-    ctx.stroke();
-
-    // Pastille de couleur
-    ctx.fillStyle = accentColor;
-    ctx.beginPath();
-    ctx.roundRect(x + 20, y + 20, 8, 8, 4);
-    ctx.fill();
-
-    // Titre
-    ctx.fillStyle = '#94a3b8';
-    ctx.font = 'bold 12px sans-serif';
-    ctx.fillText(title, x + 35, y + 28);
-
-    // KPI
-    ctx.fillStyle = '#ffffff';
-    ctx.font = 'bold 30px sans-serif';
-    ctx.fillText(kpi, x + 20, y + 68);
-
-    // Détails
-    ctx.fillStyle = '#cbd5e1';
-    ctx.font = '500 13px sans-serif';
-    details.forEach((d, idx) => {
-      ctx.fillText(d, x + 20, y + 96 + idx * 20);
-    });
   };
 
   return (
