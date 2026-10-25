@@ -1,6 +1,7 @@
 import db from '../db/index.js';
 import { SimklService } from './simklService.js';
 import { JellyfinService } from './jellyfinService.js';
+import { LdapService } from './ldapService.js';
 import { logger } from '../utils/logger.js';
 
 const SIX_HOURS_MS = 6 * 60 * 60 * 1000;
@@ -8,7 +9,7 @@ let running = false;
 let intervalHandle: ReturnType<typeof setInterval> | null = null;
 
 /**
- * Exécute un cycle de synchronisation automatique Simkl et Jellyfin pour tous les utilisateurs éligibles (U-04)
+ * Exécute un cycle de synchronisation automatique LDAP, Simkl et Jellyfin pour tous les utilisateurs éligibles (U-04)
  */
 export async function runSimklSyncOnce(): Promise<{ syncedUsers: number; errors: number }> {
   if (running) {
@@ -19,6 +20,11 @@ export async function runSimklSyncOnce(): Promise<{ syncedUsers: number; errors:
   let errors = 0;
 
   try {
+    // 0. Synchronisation automatique des membres du groupe LDAP / LLDAP
+    if (LdapService.isEnabled()) {
+      await LdapService.syncUsersFromLdap().catch(() => {});
+    }
+
     // 1. Synchronisation automatique Simkl
     const simklUsers = db
       .prepare('SELECT id, username FROM users WHERE simkl_token IS NOT NULL AND COALESCE(simkl_auto_sync, 1) = 1')

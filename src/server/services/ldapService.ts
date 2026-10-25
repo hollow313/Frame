@@ -1,4 +1,6 @@
 import { Client } from 'ldapts';
+import bcrypt from 'bcryptjs';
+import db from '../db/index.js';
 import { getSetting } from './settingsService.js';
 import { logger } from '../utils/logger.js';
 
@@ -24,7 +26,7 @@ export class LdapService {
   }
 
   /**
-   * Tester la connexion au serveur LDAP (ex: LLDAP) avec le compte Bind DN
+   * Tester la connexion au serveur LDAP (ex: LLDAP) avec le compte Bind DN et synchroniser les membres du groupe
    */
   public static async testConnection(): Promise<{ success: boolean; message: string }> {
     const url = getSetting('LDAP_URL');
@@ -49,10 +51,117 @@ export class LdapService {
     try {
       await client.bind(bindDn, bindPass);
       await client.unbind();
-      return { success: true, message: 'Connexion au serveur LDAP / LLDAP réussie !' };
+      const syncRes = await this.syncUsersFromLdap();
+      return {
+        success: true,
+        message: `Connexion LDAP / LLDAP réussie ! (${syncRes.totalLdapUsers} utilisateur(s) trouvé(s) dans le filtre, ${syncRes.importedCount} nouveau(x) importé(s))`,
+      };
     } catch (err: any) {
       logger.warn('LDAP', 'Échec du test de connexion LDAP', { error: err?.message });
       return { success: false, message: 'Échec de connexion au serveur LDAP. Vérifiez vos paramètres.' };
+    }
+  }
+
+  /**
+   * Récupérer tous les utilisateurs LDAP correspondant au filtre configuré (ex: membres du groupe Frame sur LLDAP)
+   * et les créer automatiquement dans la base SQLite de Frame sans avoir besoin de les créer manuellement.
+   */
+  public static async syncUsersFromLdap(): Promise<{
+    totalLdapUsers: number;
+    importedCount: number;
+    users: LdapUserProfile[];
+  }> {
+    if (!this.isEnabled()) {
+      return { totalLdapUsers: 0, importedCount: 0, users: [] };
+    }
+
+    const url = getSetting('LDAP_URL');
+    const bindDn = getSetting('LDAP_BIND_DN');
+    const bindPass = getSetting('LDAP_BIND_PASSWORD');
+    const baseDn = getSetting('LDAP_BASE_DN');
+    const filterTemplate =
+      getSetting('LDAP_SEARCH_FILTER') ||
+      '(&(objectClass=person)(|(uid={{username}})(cn={{username}})(mail={{username}})))';
+
+    if (!url || !baseDn || !bindDn || !bindPass) {
+      return { totalLdapUsers: 0, importedCount: 0, users: [] };
+    }
+
+    const client = new Client({
+      url,
+      timeout: 6000,
+      connectTimeout: 6000,
+    });
+
+    try {
+      await client.bind(bindDn, bindPass);
+
+      // Si le filtre contient {{username}}, on le remplace par * pour lister tous les utilisateurs éligibles.
+      // S'il ne contient pas {{username}} (ex: (&(objectClass=person)(memberOf=cn=Frame,ou=groups,...))), on l'utilise tel quel.
+      const listFilter = filterTemplate.includes('{{username}}')
+        ? filterTemplate.replace(/\{\{username\}\}/g, '*')
+        : filterTemplate;
+
+      const { searchEntries } = await client.search(baseDn, {
+        scope: 'sub',
+        filter: listFilter,
+        attributes: ['dn', 'uid', 'cn', 'displayName', 'mail'],
+      });
+
+      await client.unbind();
+
+      const profiles: LdapUserProfile[] = [];
+      let importedCount = 0;
+
+      for (const entry of searchEntries) {
+        const rawUid = entry.uid || entry.cn;
+        if (!rawUid) continue;
+        const uidStr = (Array.isArray(rawUid) ? rawUid[0] : String(rawUid)).trim().toLowerCase();
+        if (!uidStr || !/^[a-zA-Z0-9._@-]{1,64}$/.test(uidStr)) continue;
+
+        const rawDisplay = entry.displayName || entry.cn || uidStr;
+        const displayName = Array.isArray(rawDisplay) ? String(rawDisplay[0]) : String(rawDisplay);
+        const rawMail = entry.mail;
+        const email = rawMail ? (Array.isArray(rawMail) ? String(rawMail[0]) : String(rawMail)) : undefined;
+
+        profiles.push({ username: uidStr, displayName, email });
+
+        const existing = db
+          .prepare('SELECT id, display_name, auth_provider FROM users WHERE lower(username) = lower(?)')
+          .get(uidStr) as { id: number; display_name?: string; auth_provider?: string } | undefined;
+
+        if (!existing) {
+          const countRow = db.prepare('SELECT COUNT(*) as count FROM users').get() as { count: number };
+          const role = countRow.count === 0 ? 'admin' : 'user';
+          const dummyHash = bcrypt.hashSync(`ldap_sync_${Date.now()}_${Math.random()}`, 10);
+
+          db.prepare(
+            `INSERT INTO users (username, password_hash, role, display_name, auth_provider)
+             VALUES (?, ?, ?, ?, 'ldap')`
+          ).run(uidStr, dummyHash, role, displayName);
+          importedCount++;
+        } else if (!existing.display_name && displayName) {
+          db.prepare('UPDATE users SET display_name = ? WHERE id = ?').run(displayName, existing.id);
+        }
+      }
+
+      if (importedCount > 0) {
+        logger.info('LDAP', `${importedCount} nouvel(s) utilisateur(s) importé(s) automatiquement depuis le groupe LDAP`);
+      }
+
+      return {
+        totalLdapUsers: profiles.length,
+        importedCount,
+        users: profiles,
+      };
+    } catch (err: any) {
+      try {
+        await client.unbind();
+      } catch {
+        // Ignorer
+      }
+      logger.warn('LDAP', 'Impossible de synchroniser la liste des utilisateurs LDAP', { error: err?.message });
+      return { totalLdapUsers: 0, importedCount: 0, users: [] };
     }
   }
 

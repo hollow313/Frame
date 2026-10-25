@@ -130,15 +130,7 @@ export function ssoMiddleware(req: AuthenticatedRequest, _res: Response, next: N
         )
         .get(remoteUser, localPart, remoteUser) as any;
 
-      // 2. En production, s'il n'existe qu'un seul compte sur le serveur (le compte principal), l'utiliser directement
-      if (!user && process.env.NODE_ENV !== 'test') {
-        const allUsers = db.prepare('SELECT id, username, role, display_name FROM users ORDER BY id ASC').all() as any[];
-        if (allUsers.length === 1) {
-          user = allUsers[0];
-        }
-      }
-
-      // 3. Sinon, créer l'utilisateur SSO avec le rôle 'user' (conformément à F-07)
+      // 2. Sinon, créer le compte propre à cet utilisateur SSO avec le rôle 'user' (jamais fusionné sur le compte admin d'un autre)
       if (!user) {
         const dummyHash = bcrypt.hashSync(`sso_managed_${Date.now()}_${Math.random()}`, 10);
 
@@ -147,11 +139,11 @@ export function ssoMiddleware(req: AuthenticatedRequest, _res: Response, next: N
           INSERT INTO users (username, password_hash, role, display_name, auth_provider)
           VALUES (?, ?, 'user', ?, 'sso')
         `)
-          .run(remoteUser, dummyHash, remoteName);
+          .run(localPart.toLowerCase(), dummyHash, remoteName);
 
         user = {
           id: Number(info.lastInsertRowid),
-          username: remoteUser,
+          username: localPart.toLowerCase(),
           role: 'user',
           display_name: remoteName,
         };
@@ -163,28 +155,8 @@ export function ssoMiddleware(req: AuthenticatedRequest, _res: Response, next: N
         role: user.role,
         displayName: user.display_name,
       };
+      req.ssoAuthenticated = true;
       return next();
-    }
-
-    // Fallback SSO sans en-tête : si le reverse proxy (Traefik / Nginx / Authelia / Authentik) filtre déjà l'accès en amont
-    // mais ne transmet pas l'en-tête Remote-User au conteneur, connecter automatiquement le compte principal du serveur
-    if (process.env.NODE_ENV !== 'test') {
-      const primaryUser = db
-        .prepare(
-          `SELECT id, username, role, display_name FROM users
-           ORDER BY CASE WHEN role = 'admin' THEN 0 WHEN auth_provider = 'ldap' THEN 1 ELSE 2 END, id ASC
-           LIMIT 1`
-        )
-        .get() as any;
-
-      if (primaryUser) {
-        req.user = {
-          id: primaryUser.id,
-          username: primaryUser.username,
-          role: primaryUser.role,
-          displayName: primaryUser.display_name,
-        };
-      }
     }
   } catch (e) {
     logger.error('SSO', 'Erreur dans ssoMiddleware', { error: String(e) });

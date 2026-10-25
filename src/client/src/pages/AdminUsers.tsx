@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Users, Shield, User as UserIcon, Trash2, Calendar, Film, Bookmark, UserPlus, X, Check } from 'lucide-react';
+import { Users, Shield, User as UserIcon, Trash2, Calendar, Film, Bookmark, UserPlus, X, Check, RefreshCw } from 'lucide-react';
 import { api } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 
@@ -7,6 +7,8 @@ export const AdminUsers: React.FC = () => {
   const { user: currentUser } = useAuth();
   const [users, setUsers] = useState<any[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
+  const [syncingLdap, setSyncingLdap] = useState<boolean>(false);
+  const [ldapSyncMessage, setLdapSyncMessage] = useState<string | null>(null);
 
   // Modal création utilisateur
   const [createModalOpen, setCreateModalOpen] = useState(false);
@@ -30,6 +32,21 @@ export const AdminUsers: React.FC = () => {
       console.error(e);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleSyncLdap = async () => {
+    setSyncingLdap(true);
+    setLdapSyncMessage(null);
+    try {
+      const res = await api.syncLdapUsers();
+      setLdapSyncMessage(res.message);
+      await loadUsers();
+      setTimeout(() => setLdapSyncMessage(null), 5000);
+    } catch (err: any) {
+      setLdapSyncMessage(err.message || 'Erreur lors de la synchronisation LDAP');
+    } finally {
+      setSyncingLdap(false);
     }
   };
 
@@ -90,14 +107,32 @@ export const AdminUsers: React.FC = () => {
           </p>
         </div>
 
-        <button
-          onClick={() => setCreateModalOpen(true)}
-          className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-primary-600 hover:bg-primary-500 text-white text-xs font-bold shadow-glow transition-all hover:scale-105 self-start sm:self-auto"
-        >
-          <UserPlus className="w-4 h-4" />
-          <span>Créer un utilisateur</span>
-        </button>
+        <div className="flex flex-wrap items-center gap-2.5 self-start sm:self-auto">
+          <button
+            onClick={handleSyncLdap}
+            disabled={syncingLdap}
+            className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-indigo-600/20 hover:bg-indigo-600/30 border border-indigo-500/30 text-indigo-300 text-xs font-bold transition-all disabled:opacity-50"
+          >
+            <RefreshCw className={`w-4 h-4 ${syncingLdap ? 'animate-spin' : ''}`} />
+            <span>{syncingLdap ? 'Synchronisation LDAP...' : 'Synchroniser le groupe LDAP'}</span>
+          </button>
+
+          <button
+            onClick={() => setCreateModalOpen(true)}
+            className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-primary-600 hover:bg-primary-500 text-white text-xs font-bold shadow-glow transition-all hover:scale-105"
+          >
+            <UserPlus className="w-4 h-4" />
+            <span>Créer un utilisateur</span>
+          </button>
+        </div>
       </div>
+
+      {ldapSyncMessage && (
+        <div className="p-3.5 rounded-xl bg-indigo-500/10 border border-indigo-500/30 text-indigo-300 text-xs font-semibold flex items-center gap-2">
+          <Check className="w-4 h-4 shrink-0" />
+          <span>{ldapSyncMessage}</span>
+        </div>
+      )}
 
       {loading ? (
         <div className="h-48 flex items-center justify-center">
@@ -107,6 +142,14 @@ export const AdminUsers: React.FC = () => {
         <div className="space-y-3">
           {users.map((u) => {
             const isSelf = u.id === currentUser?.id;
+            const rawDate = u.created_at || u.createdAt;
+            const parsedDate = rawDate ? new Date(rawDate) : null;
+            const dateStr =
+              parsedDate && !isNaN(parsedDate.getTime())
+                ? parsedDate.toLocaleDateString('fr-FR')
+                : 'Récemment';
+            const provider = (u.auth_provider || u.authProvider || 'local').toUpperCase();
+
             return (
               <div
                 key={u.id}
@@ -117,13 +160,16 @@ export const AdminUsers: React.FC = () => {
                     {u.username.substring(0, 2)}
                   </div>
                   <div>
-                    <div className="flex items-center gap-2">
+                    <div className="flex flex-wrap items-center gap-2">
                       <span className="text-sm font-bold text-white">
-                        {u.display_name || u.username}
+                        {u.display_name || u.displayName || u.username}
                       </span>
                       <span className="text-xs text-slate-400">(@{u.username})</span>
+                      <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-white/5 text-slate-300 border border-white/10">
+                        {provider}
+                      </span>
                       {isSelf && (
-                        <span className="text-[10px] font-bold px-1.5 py-0.2 rounded bg-primary-500/20 text-primary-400">
+                        <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-primary-500/20 text-primary-400">
                           Vous
                         </span>
                       )}
@@ -131,15 +177,15 @@ export const AdminUsers: React.FC = () => {
                     <div className="flex items-center gap-3 text-xs text-slate-400 mt-1">
                       <span className="flex items-center gap-1">
                         <Film className="w-3 h-3" />
-                        {u.watched_count} vus
+                        {u.watched_count ?? u.watchedCount ?? 0} vus
                       </span>
                       <span className="flex items-center gap-1">
                         <Bookmark className="w-3 h-3" />
-                        {u.watchlist_count} à voir
+                        {u.watchlist_count ?? u.watchlistCount ?? 0} à voir
                       </span>
                       <span className="flex items-center gap-1">
                         <Calendar className="w-3 h-3" />
-                        {new Date(u.created_at).toLocaleDateString('fr-FR')}
+                        {dateStr}
                       </span>
                     </div>
                   </div>

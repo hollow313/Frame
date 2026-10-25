@@ -105,6 +105,10 @@ router.put('/', authenticateToken, requireAdmin, (req: AuthenticatedRequest, res
       }
     }
 
+    if (LdapService.isEnabled()) {
+      LdapService.syncUsersFromLdap().catch(() => {});
+    }
+
     res.json({
       success: true,
       message: 'Paramètres mis à jour et sauvegardés avec succès.',

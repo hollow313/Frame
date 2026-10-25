@@ -12,13 +12,30 @@ export interface AuthUser {
 
 export interface AuthenticatedRequest extends Request {
   user?: AuthUser;
+  ssoAuthenticated?: boolean;
 }
 
 /**
- * Extrait et valide l'utilisateur courant à partir du cookie ou de l'en-tête Authorization,
+ * Extrait et valide l'utilisateur courant à partir de l'en-tête SSO (si présent), du cookie ou de l'en-tête Authorization,
  * puis vérifie son existence et son rôle en temps réel dans SQLite (F-05, D-05).
  */
 export function extractUser(req: AuthenticatedRequest): AuthUser | null {
+  // Si le reverse proxy a explicitement identifié l'utilisateur courant via un en-tête SSO (ex: Remote-User),
+  // cet utilisateur prime sur tout éventuel ancien cookie JWT d'un autre compte.
+  if (req.ssoAuthenticated && req.user) {
+    const dbUser = db
+      .prepare('SELECT id, username, role, display_name FROM users WHERE id = ?')
+      .get(req.user.id) as { id: number; username: string; role: 'admin' | 'user'; display_name?: string } | undefined;
+    if (dbUser) {
+      return {
+        id: dbUser.id,
+        username: dbUser.username,
+        role: dbUser.role,
+        displayName: dbUser.display_name,
+      };
+    }
+  }
+
   const authHeader = req.headers['authorization'];
   let token = authHeader && authHeader.startsWith('Bearer ') ? authHeader.split(' ')[1] : null;
 

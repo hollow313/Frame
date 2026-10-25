@@ -34,9 +34,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setUser(me);
       } catch (e: any) {
         setToken(null);
-        // Si un utilisateur SSO est détecté par le reverse proxy mais qu'un ancien token local avait expiré,
-        // initialiser automatiquement la session SSO sans afficher la page de connexion
-        if (status.ssoUser || status.ssoEnabled) {
+        // Si un utilisateur SSO spécifique est identifié par l'en-tête du reverse proxy (ex: Remote-User),
+        // initialiser automatiquement sa session propre
+        if (status.ssoUser) {
           try {
             const ssoRes = await api.loginSso();
             if (ssoRes?.token) {
@@ -46,7 +46,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             setUser(meRetry);
             return;
           } catch {
-            // Ignorer si pas de session SSO
+            // Ignorer
           }
         }
         if (e?.status === 401) {

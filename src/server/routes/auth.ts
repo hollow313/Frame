@@ -55,14 +55,35 @@ function validatePasswordStrength(username: string, password: unknown): string |
 
 /**
  * Vérifier si un premier administrateur existe et renvoyer les options d'authentification actives
+ * Si LDAP est actif, synchronise automatiquement les utilisateurs du groupe LDAP configuré.
  */
-router.get('/status', (req: AuthenticatedRequest, res: Response) => {
+router.get('/status', async (req: AuthenticatedRequest, res: Response) => {
   try {
+    if (LdapService.isEnabled()) {
+      await LdapService.syncUsersFromLdap();
+    }
+
     const row = db.prepare('SELECT COUNT(*) as count FROM users').get() as { count: number };
     const initialized = row.count > 0;
     const allowRegistration = !initialized || getSetting('ALLOW_REGISTRATION') === 'true';
     const ldapEnabled = LdapService.isEnabled();
     const ssoEnabled = getSetting('SSO_ENABLED') === 'true';
+
+    // Si le SSO est activé (l'accès à Frame est déjà protégé par le portail SSO en amont),
+    // renvoyer la liste des profils (synchronisés depuis le groupe LDAP) pour permettre la sélection de son profil en 1 clic sans ressaisir son mot de passe LDAP
+    let ssoProfiles: Array<{ id: number; username: string; displayName: string; role: string; authProvider: string }> = [];
+    if (ssoEnabled) {
+      const users = db
+        .prepare('SELECT id, username, display_name, role, auth_provider FROM users ORDER BY CASE WHEN role = \'admin\' THEN 0 ELSE 1 END, username ASC')
+        .all() as any[];
+      ssoProfiles = users.map((u) => ({
+        id: u.id,
+        username: u.username,
+        displayName: u.display_name || u.username,
+        role: u.role,
+        authProvider: u.auth_provider || 'local',
+      }));
+    }
 
     res.json({
       initialized,
@@ -70,6 +91,7 @@ router.get('/status', (req: AuthenticatedRequest, res: Response) => {
       ldapEnabled,
       ssoEnabled,
       ssoUser: req.user ? { username: req.user.username } : null,
+      ssoProfiles,
     });
   } catch (err: any) {
     serverError(res, err, 'AuthStatus');
@@ -78,19 +100,38 @@ router.get('/status', (req: AuthenticatedRequest, res: Response) => {
 
 /**
  * Émettre une session JWT complète à partir d'une authentification SSO par proxy de confiance (F-07)
+ * ou par sélection de son profil utilisateur après validation du portail SSO en amont.
  */
 router.post('/sso', (req: AuthenticatedRequest, res: Response) => {
   try {
-    if (!req.user) {
+    const ssoEnabled = getSetting('SSO_ENABLED') === 'true';
+    let targetUser = req.user;
+
+    // Si le reverse proxy n'a pas injecté l'en-tête Remote-User mais que le SSO est actif et que l'utilisateur a choisi son profil
+    if (!targetUser && ssoEnabled && req.body?.userId) {
+      const dbUser = db
+        .prepare('SELECT id, username, role, display_name FROM users WHERE id = ?')
+        .get(Number(req.body.userId)) as { id: number; username: string; role: 'admin' | 'user'; display_name?: string } | undefined;
+      if (dbUser) {
+        targetUser = {
+          id: dbUser.id,
+          username: dbUser.username,
+          role: dbUser.role,
+          displayName: dbUser.display_name,
+        };
+      }
+    }
+
+    if (!targetUser) {
       res.status(401).json({ error: 'Aucune session SSO active détectée.' });
       return;
     }
 
-    const token = generateToken(req.user);
+    const token = generateToken(targetUser);
     res.clearCookie('frame_sso_logout', { path: '/' });
     res.cookie('frame_token', token, getCookieOpts(req));
     res.json({
-      user: req.user,
+      user: targetUser,
       token,
     });
   } catch (err: any) {

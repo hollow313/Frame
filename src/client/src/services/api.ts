@@ -65,10 +65,18 @@ export const api = {
       ldapEnabled: boolean;
       ssoEnabled: boolean;
       ssoUser?: { username: string } | null;
+      ssoProfiles?: Array<{
+        id: number;
+        username: string;
+        displayName: string;
+        role: string;
+        authProvider: string;
+      }>;
     }>('/auth/status'),
-  loginSso: () =>
+  loginSso: (userId?: number) =>
     request<{ user: User; token: string }>('/auth/sso', {
       method: 'POST',
+      body: userId ? JSON.stringify({ userId }) : undefined,
     }),
   login: (credentials: { username: string; password: string }) =>
     request<{ user: User; token: string; simklConnected?: boolean; jellyfinConnected?: boolean }>('/auth/login', {
@@ -388,6 +396,10 @@ export const api = {
 
   // ==================== USERS (ADMIN) ====================
   getUsers: () => request<any[]>('/users'),
+  syncLdapUsers: () =>
+    request<{ success: boolean; totalLdapUsers: number; importedCount: number; message: string }>('/users/sync-ldap', {
+      method: 'POST',
+    }),
   updateUserRole: (id: number, role: 'admin' | 'user') =>
     request<{ success: boolean; message: string }>(`/users/${id}/role`, {
       method: 'PUT',
