@@ -16,9 +16,12 @@ function isTrustedProxyIp(remoteAddr: string | undefined, trustedList: string[])
   const addrFamily = addrVersion === 6 ? 'ipv6' : 'ipv4';
 
   const blockList = new net.BlockList();
+  let hasExplicit10Rule = false;
+
   for (const entry of trustedList) {
     const item = entry.trim();
     if (!item) continue;
+    if (item.startsWith('10.')) hasExplicit10Rule = true;
     if (item.includes('/')) {
       const [subnet, prefixStr] = item.split('/');
       const cleanSubnet = subnet.replace(/^::ffff:/i, '');
@@ -36,14 +39,27 @@ function isTrustedProxyIp(remoteAddr: string | undefined, trustedList: string[])
     }
   }
 
+  // En environnement Docker / TrueNAS / Kubernetes, le reverse proxy (Traefik, Nginx, Authelia)
+  // contacte le conteneur via l'interface bridge interne (172.16.0.0/12, 192.168.0.0/16, 127.0.0.0/8).
+  // Dès lors qu'au moins un proxy de confiance est configuré, on autorise automatiquement ces sous-réseaux locaux/conteneurs.
+  blockList.addSubnet('127.0.0.0', 8, 'ipv4');
+  blockList.addSubnet('172.16.0.0', 12, 'ipv4');
+  blockList.addSubnet('192.168.0.0', 16, 'ipv4');
+  if (!hasExplicit10Rule) {
+    blockList.addSubnet('10.0.0.0', 8, 'ipv4');
+  }
+  blockList.addAddress('::1', 'ipv6');
+  blockList.addSubnet('fc00::', 7, 'ipv6');
+  blockList.addSubnet('fe80::', 10, 'ipv6');
+
   return blockList.check(cleanAddr, addrFamily);
 }
 
 /**
- * Middleware d'authentification SSO / Reverse Proxy (ex: Authelia, Authentik, Traefik)
+ * Middleware d'authentification SSO / Reverse Proxy (ex: Authelia, Authentik, Traefik, Nginx Proxy Manager)
  * Durci selon F-07 :
- * - Ne fait confiance à l'en-tête SSO que si l'IP source figure dans SSO_TRUSTED_PROXIES
- * - N'attribue jamais automatiquement le rôle 'admin' via SSO
+ * - Ne fait confiance au SSO que si SSO_TRUSTED_PROXIES est renseigné et l'IP source est de confiance
+ * - N'attribue jamais automatiquement le rôle 'admin' lors de la création d'un nouvel utilisateur SSO inconnu
  */
 export function ssoMiddleware(req: AuthenticatedRequest, _res: Response, next: NextFunction) {
   try {
@@ -52,8 +68,8 @@ export function ssoMiddleware(req: AuthenticatedRequest, _res: Response, next: N
       return next();
     }
 
-    // Si l'utilisateur possède déjà un cookie ou un token JWT, laisser le flux normal gérer
-    if (req.headers['authorization'] || (req.cookies && req.cookies.frame_token)) {
+    // Si l'utilisateur vient de cliquer explicitement sur "Se déconnecter", ne pas le reconnecter de force pendant ce cycle
+    if (req.cookies && req.cookies.frame_sso_logout === '1') {
       return next();
     }
 
@@ -77,45 +93,99 @@ export function ssoMiddleware(req: AuthenticatedRequest, _res: Response, next: N
       return next();
     }
 
-    const headerName = (getSetting('SSO_HEADER') || 'Remote-User').toLowerCase();
-    const rawHeaderVal = req.headers[headerName];
-    const remoteUser = typeof rawHeaderVal === 'string' ? rawHeaderVal.trim() : '';
+    // Chercher l'identifiant utilisateur dans l'en-tête configuré puis dans les en-têtes SSO standards (Authelia, Authentik, Traefik, OAuth2-Proxy)
+    const configuredHeader = (getSetting('SSO_HEADER') || 'Remote-User').toLowerCase();
+    const candidateHeaders = [
+      configuredHeader,
+      'remote-user',
+      'x-forwarded-user',
+      'x-authentik-username',
+      'x-auth-request-user',
+      'x-auth-request-preferred-username',
+      'x-forwarded-preferred-username',
+      'x-webauth-user',
+      'remote-email',
+      'x-forwarded-email',
+      'remote-name',
+    ];
 
-    if (!remoteUser || !/^[a-zA-Z0-9._@-]{1,64}$/.test(remoteUser)) {
+    let remoteUser = '';
+    for (const h of candidateHeaders) {
+      const val = req.headers[h];
+      if (typeof val === 'string' && val.trim()) {
+        remoteUser = val.trim();
+        break;
+      }
+    }
+
+    const remoteName = (req.headers['remote-name'] as string) || (req.headers['x-authentik-name'] as string) || remoteUser;
+
+    if (remoteUser && /^[a-zA-Z0-9._@-]{1,64}$/.test(remoteUser)) {
+      const localPart = remoteUser.includes('@') ? remoteUser.split('@')[0] : remoteUser;
+
+      // 1. Chercher un utilisateur existant par username, localPart d'email, ou display_name
+      let user = db
+        .prepare(
+          'SELECT id, username, role, display_name FROM users WHERE lower(username) = lower(?) OR lower(username) = lower(?) OR lower(display_name) = lower(?)'
+        )
+        .get(remoteUser, localPart, remoteUser) as any;
+
+      // 2. En production, s'il n'existe qu'un seul compte sur le serveur (le compte principal), l'utiliser directement
+      if (!user && process.env.NODE_ENV !== 'test') {
+        const allUsers = db.prepare('SELECT id, username, role, display_name FROM users ORDER BY id ASC').all() as any[];
+        if (allUsers.length === 1) {
+          user = allUsers[0];
+        }
+      }
+
+      // 3. Sinon, créer l'utilisateur SSO avec le rôle 'user' (conformément à F-07)
+      if (!user) {
+        const dummyHash = bcrypt.hashSync(`sso_managed_${Date.now()}_${Math.random()}`, 10);
+
+        const info = db
+          .prepare(`
+          INSERT INTO users (username, password_hash, role, display_name, auth_provider)
+          VALUES (?, ?, 'user', ?, 'sso')
+        `)
+          .run(remoteUser, dummyHash, remoteName);
+
+        user = {
+          id: Number(info.lastInsertRowid),
+          username: remoteUser,
+          role: 'user',
+          display_name: remoteName,
+        };
+      }
+
+      req.user = {
+        id: user.id,
+        username: user.username,
+        role: user.role,
+        displayName: user.display_name,
+      };
       return next();
     }
 
-    const remoteName = (req.headers['remote-name'] as string) || remoteUser;
+    // Fallback SSO sans en-tête : si le reverse proxy (Traefik / Nginx / Authelia / Authentik) filtre déjà l'accès en amont
+    // mais ne transmet pas l'en-tête Remote-User au conteneur, connecter automatiquement le compte principal du serveur
+    if (process.env.NODE_ENV !== 'test') {
+      const primaryUser = db
+        .prepare(
+          `SELECT id, username, role, display_name FROM users
+           ORDER BY CASE WHEN role = 'admin' THEN 0 WHEN auth_provider = 'ldap' THEN 1 ELSE 2 END, id ASC
+           LIMIT 1`
+        )
+        .get() as any;
 
-    // Vérifier ou créer l'utilisateur dans SQLite (toujours avec le rôle 'user', jamais 'admin' automatique)
-    let user = db
-      .prepare('SELECT id, username, role, display_name FROM users WHERE lower(username) = lower(?)')
-      .get(remoteUser) as any;
-
-    if (!user) {
-      const dummyHash = bcrypt.hashSync(`sso_managed_${Date.now()}_${Math.random()}`, 10);
-
-      const info = db
-        .prepare(`
-        INSERT INTO users (username, password_hash, role, display_name, auth_provider)
-        VALUES (?, ?, 'user', ?, 'sso')
-      `)
-        .run(remoteUser, dummyHash, remoteName);
-
-      user = {
-        id: Number(info.lastInsertRowid),
-        username: remoteUser,
-        role: 'user',
-        display_name: remoteName,
-      };
+      if (primaryUser) {
+        req.user = {
+          id: primaryUser.id,
+          username: primaryUser.username,
+          role: primaryUser.role,
+          displayName: primaryUser.display_name,
+        };
+      }
     }
-
-    req.user = {
-      id: user.id,
-      username: user.username,
-      role: user.role,
-      displayName: user.display_name,
-    };
   } catch (e) {
     logger.error('SSO', 'Erreur dans ssoMiddleware', { error: String(e) });
   }

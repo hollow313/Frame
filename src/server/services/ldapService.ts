@@ -95,7 +95,9 @@ export class LdapService {
 
       // 2. Rechercher le DN de l'utilisateur avec échappement RFC 4515
       const safeUsername = escapeLdapFilter(cleanUsername);
-      const searchFilter = filterTemplate.replace(/\{\{username\}\}/g, safeUsername);
+      const searchFilter = filterTemplate.includes('{{username}}')
+        ? filterTemplate.replace(/\{\{username\}\}/g, safeUsername)
+        : `(&${filterTemplate}(|(uid=${safeUsername})(cn=${safeUsername})(mail=${safeUsername})))`;
       const { searchEntries } = await client.search(baseDn, {
         scope: 'sub',
         filter: searchFilter,

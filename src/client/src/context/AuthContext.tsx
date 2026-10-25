@@ -33,8 +33,23 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
         setUser(me);
       } catch (e: any) {
+        setToken(null);
+        // Si un utilisateur SSO est détecté par le reverse proxy mais qu'un ancien token local avait expiré,
+        // initialiser automatiquement la session SSO sans afficher la page de connexion
+        if (status.ssoUser || status.ssoEnabled) {
+          try {
+            const ssoRes = await api.loginSso();
+            if (ssoRes?.token) {
+              setToken(ssoRes.token);
+            }
+            const meRetry: any = await api.getMe();
+            setUser(meRetry);
+            return;
+          } catch {
+            // Ignorer si pas de session SSO
+          }
+        }
         if (e?.status === 401) {
-          setToken(null);
           setUser(null);
         }
       }

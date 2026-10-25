@@ -87,6 +87,7 @@ router.post('/sso', (req: AuthenticatedRequest, res: Response) => {
     }
 
     const token = generateToken(req.user);
+    res.clearCookie('frame_sso_logout', { path: '/' });
     res.cookie('frame_token', token, getCookieOpts(req));
     res.json({
       user: req.user,
@@ -421,8 +422,12 @@ router.put('/preferences', authenticateToken, (req: AuthenticatedRequest, res: R
 /**
  * Déconnexion
  */
-router.post('/logout', (_req: Request, res: Response) => {
+router.post('/logout', (req: Request, res: Response) => {
   res.clearCookie('frame_token', { path: '/' });
+  res.cookie('frame_sso_logout', '1', {
+    ...getCookieOpts(req),
+    maxAge: 10 * 60 * 1000,
+  });
   res.json({ success: true });
 });
 

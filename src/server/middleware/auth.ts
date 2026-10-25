@@ -26,44 +26,46 @@ export function extractUser(req: AuthenticatedRequest): AuthUser | null {
     token = req.cookies.frame_token;
   }
 
-  if (!token) {
-    if (req.user) {
-      // Déjà injecté par le middleware SSO (si proxy de confiance vérifié)
-      const dbUser = db
-        .prepare('SELECT id, username, role, display_name FROM users WHERE id = ?')
-        .get(req.user.id) as { id: number; username: string; role: 'admin' | 'user'; display_name?: string } | undefined;
-      if (!dbUser) return null;
-      return {
-        id: dbUser.id,
-        username: dbUser.username,
-        role: dbUser.role,
-        displayName: dbUser.display_name,
-      };
+  if (token) {
+    try {
+      const secret = getSetting('JWT_SECRET');
+      if (secret) {
+        const payload = jwt.verify(token, secret) as { id: number };
+        if (payload && typeof payload.id === 'number') {
+          const dbUser = db
+            .prepare('SELECT id, username, role, display_name FROM users WHERE id = ?')
+            .get(payload.id) as { id: number; username: string; role: 'admin' | 'user'; display_name?: string } | undefined;
+
+          if (dbUser) {
+            return {
+              id: dbUser.id,
+              username: dbUser.username,
+              role: dbUser.role,
+              displayName: dbUser.display_name,
+            };
+          }
+        }
+      }
+    } catch {
+      // Token invalide ou expiré : continuer vers le fallback SSO (req.user)
     }
-    return null;
   }
 
-  try {
-    const secret = getSetting('JWT_SECRET');
-    if (!secret) return null;
-    const payload = jwt.verify(token, secret) as { id: number };
-    if (!payload || typeof payload.id !== 'number') return null;
-
+  if (req.user) {
+    // Injecté par le middleware SSO (si proxy de confiance vérifié)
     const dbUser = db
       .prepare('SELECT id, username, role, display_name FROM users WHERE id = ?')
-      .get(payload.id) as { id: number; username: string; role: 'admin' | 'user'; display_name?: string } | undefined;
-
+      .get(req.user.id) as { id: number; username: string; role: 'admin' | 'user'; display_name?: string } | undefined;
     if (!dbUser) return null;
-
     return {
       id: dbUser.id,
       username: dbUser.username,
       role: dbUser.role,
       displayName: dbUser.display_name,
     };
-  } catch {
-    return null;
   }
+
+  return null;
 }
 
 export function authenticateToken(req: AuthenticatedRequest, res: Response, next: NextFunction) {
