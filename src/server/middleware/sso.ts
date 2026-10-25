@@ -291,6 +291,34 @@ function extractBaseDomain(req?: Request): string {
 }
 
 /**
+ * Détermine si la requête provient d'un accès direct local (LAN / IP locale / localhost)
+ * et non du Reverse Proxy / nom de domaine public avec SSO.
+ */
+export function isDirectLocalAccess(req?: Request): boolean {
+  if (!req) return true;
+
+  // 1. Si X-Forwarded-Host est un nom de domaine (ex: frame.home-lh.ovh), c'est un accès via domaine public
+  const forwardedHost = req.headers['x-forwarded-host'];
+  if (typeof forwardedHost === 'string' && forwardedHost.trim()) {
+    const cleanHost = forwardedHost.split(',')[0].trim().split(':')[0];
+    if (cleanHost && net.isIP(cleanHost) === 0 && cleanHost !== 'localhost' && !cleanHost.endsWith('.local')) {
+      return false;
+    }
+  }
+
+  // 2. Si le Host direct de la requête est une adresse IP locale ou localhost
+  const hostHeader = (req.headers.host || '').split(':')[0].trim();
+  if (hostHeader) {
+    if (net.isIP(hostHeader) !== 0 || hostHeader === 'localhost' || hostHeader.endsWith('.local')) {
+      return true;
+    }
+    return false;
+  }
+
+  return true;
+}
+
+/**
  * URL du portail SSO (pour redirection de connexion)
  */
 export function getSsoPortalUrl(req?: Request): string | null {
@@ -456,7 +484,19 @@ function attachSsoUserToRequest(req: AuthenticatedRequest, remoteUser: string, r
     )
     .get(remoteUser, localPart) as any;
 
-  // 2. Sinon, correspondance exacte sur l'identifiant (username ou partie locale de l'email)
+  // 2. Si l'identifiant SSO est "admin", associer automatiquement à l'administrateur principal de Frame (ex: "loic" / "Hollow")
+  if (!user && (remoteUser.toLowerCase() === 'admin' || localPart.toLowerCase() === 'admin')) {
+    const primaryAdmin = db
+      .prepare("SELECT id, username, role, display_name FROM users WHERE role = 'admin' ORDER BY id ASC LIMIT 1")
+      .get() as any;
+    if (primaryAdmin) {
+      user = primaryAdmin;
+      db.prepare('UPDATE users SET sso_alias = ? WHERE id = ?').run(remoteUser.toLowerCase(), primaryAdmin.id);
+      logger.info('SSO', `Compte administrateur "${primaryAdmin.username}" associé automatiquement à l'identifiant SSO "${remoteUser}"`);
+    }
+  }
+
+  // 3. Sinon, correspondance exacte sur l'identifiant (username ou partie locale de l'email)
   if (!user) {
     user = db
       .prepare(
@@ -465,7 +505,7 @@ function attachSsoUserToRequest(req: AuthenticatedRequest, remoteUser: string, r
       .get(remoteUser, localPart) as any;
   }
 
-  // 3. S'il n'existe pas encore, créer son propre compte (toujours avec le rôle 'user' conformément à F-07)
+  // 4. S'il n'existe pas encore, créer son propre compte (toujours avec le rôle 'user' conformément à F-07)
   if (!user) {
     const dummyHash = bcrypt.hashSync(`sso_managed_${Date.now()}_${Math.random()}`, 10);
     const cleanUsername = localPart.toLowerCase();
@@ -495,12 +535,7 @@ function attachSsoUserToRequest(req: AuthenticatedRequest, remoteUser: string, r
   };
   req.ssoIdentity = { ...identity, ssoUsername: remoteUser };
 
-  // Après une déconnexion explicite de Frame, l'identité SSO reste connue (bouton "Continuer en tant que ...")
-  // mais l'utilisateur n'est plus reconnecté automatiquement, afin de pouvoir choisir un autre compte.
-  if (req.cookies && req.cookies.frame_sso_logout === '1') {
-    return;
-  }
-
+  // L'utilisateur est connecté automatiquement dès qu'il est validé par le SSO (0 clic)
   req.user = identity;
   req.ssoAuthenticated = true;
 }

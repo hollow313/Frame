@@ -1170,8 +1170,14 @@ export const Settings: React.FC = () => {
                   </div>
                 </div>
 
-                <div className="pt-2 border-t border-white/5">
-                  <label className="flex items-start gap-3 cursor-pointer">
+                <div className="pt-2 border-t border-white/5 space-y-2">
+                  <div className="p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-xs text-emerald-300">
+                    <p className="font-semibold text-white">Sécurité d'accès adaptative active</p>
+                    <p className="text-[11px] text-emerald-400/90 mt-0.5">
+                      L'accès public via votre nom de domaine / Reverse Proxy désactive automatiquement le formulaire de mot de passe local (protection totale contre le brute-force externe). L'accès direct via l'IP locale de votre réseau domestique autorise la connexion par mot de passe.
+                    </p>
+                  </div>
+                  <label className="flex items-start gap-3 cursor-pointer pt-1">
                     <input
                       type="checkbox"
                       checked={ssoDisableLocalLogin}
@@ -1180,10 +1186,10 @@ export const Settings: React.FC = () => {
                     />
                     <div>
                       <span className="text-xs text-slate-200 font-semibold block">
-                        Désactiver totalement le formulaire de mot de passe local (recommandé si Frame est exposé sur Internet)
+                        Désactiver aussi la connexion par mot de passe en accès local direct
                       </span>
                       <span className="text-[11px] text-slate-400 block mt-0.5">
-                        Bloque tout risque d'attaque par bruteforce externe sur Frame. Tous les utilisateurs doivent obligatoirement s'authentifier via votre portail SSO.
+                        Si coché, la connexion par mot de passe sera également bloquée lors d'un accès direct par adresse IP locale.
                       </span>
                     </div>
                   </label>

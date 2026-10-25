@@ -26,7 +26,22 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const status = await api.getAuthStatus();
       setIsInitialized(status.initialized);
 
-      // Le serveur résout déjà l'utilisateur courant (connexion manuelle > identité SSO > jeton précédent)
+      // 1. Si une identité SSO est validée par le proxy / portail SSO, connexion automatique immédiate (0 clic)
+      if (status.ssoUser) {
+        try {
+          const ssoRes = await api.loginSso();
+          if (ssoRes?.token) {
+            setToken(ssoRes.token);
+          }
+          const meSso: any = await api.getMe();
+          setUser(meSso);
+          return;
+        } catch {
+          // Continuer vers la session par jeton
+        }
+      }
+
+      // 2. Sinon, vérifier la session locale existante par jeton (ex: connexion locale LAN)
       try {
         const me: any = await api.getMe();
         if (me?.token) {
@@ -38,21 +53,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setToken(null);
       }
 
-      // Pas de session : si le portail SSO identifie l'utilisateur (User A ou User B) et qu'il ne s'est pas
-      // explicitement déconnecté de Frame, ouvrir automatiquement sa session
-      if (status.ssoUser && !status.ssoPaused) {
-        try {
-          const ssoRes = await api.loginSso();
-          if (ssoRes?.token) {
-            setToken(ssoRes.token);
-          }
-          const meRetry: any = await api.getMe();
-          setUser(meRetry);
-          return;
-        } catch {
-          // Ignorer
-        }
-      }
       setUser(null);
     } catch (e) {
       console.error('Erreur initialisation AuthContext', e);

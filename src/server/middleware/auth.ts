@@ -63,20 +63,20 @@ export function extractUser(req: AuthenticatedRequest): AuthUser | null {
     }
   }
 
-  // 1. Connexion manuelle explicite : prioritaire sur l'identité SSO
-  if (tokenPayload && tokenPayload.src === 'password') {
-    const u = loadDbUser(tokenPayload.id);
-    if (u) {
-      req.authSource = 'password';
-      return u;
-    }
-  }
-
-  // 2. Identité SSO du navigateur
+  // 1. Identité SSO active validée par le reverse proxy de confiance
   if (req.ssoAuthenticated && req.user) {
     const u = loadDbUser(req.user.id);
     if (u) {
       req.authSource = 'sso';
+      return u;
+    }
+  }
+
+  // 2. Connexion explicite par identifiant / mot de passe (local ou LAN)
+  if (tokenPayload && tokenPayload.src === 'password') {
+    const u = loadDbUser(tokenPayload.id);
+    if (u) {
+      req.authSource = 'password';
       return u;
     }
   }
