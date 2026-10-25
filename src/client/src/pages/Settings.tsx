@@ -799,7 +799,11 @@ export const Settings: React.FC = () => {
               </label>
               <select
                 value={seerDefaultUserId}
-                onChange={(e) => setSeerDefaultUserId(e.target.value)}
+                onChange={(e) => {
+                  const newVal = e.target.value;
+                  setSeerDefaultUserId(newVal);
+                  api.updateSettings({ SEER_DEFAULT_USER_ID: newVal }).catch(() => {});
+                }}
                 className="w-full bg-dark-850 border border-white/10 rounded-xl px-3.5 py-2 text-sm text-slate-100 focus:outline-none focus:border-primary-500 cursor-pointer"
               >
                 <option value="">Par défaut (Admin - Clé API)</option>

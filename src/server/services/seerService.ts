@@ -198,7 +198,53 @@ export class SeerService {
   }
 
   /**
-   * Créer une demande de film ou série dans Overseerr / Jellyseerr
+   * S'assurer qu'un utilisateur secondaire Seer (ex: "TV", ID > 1) sélectionné pour la gestion des approbations
+   * possède bien le droit de faire des demandes (REQUEST) et N'A PAS l'auto-approbation activée.
+   */
+  private static async ensureRequesterPermissions(userId: number): Promise<void> {
+    if (!userId || userId <= 1) return;
+    try {
+      const PERM_ADMIN = 2;
+      const PERM_MANAGE_REQUESTS = 16;
+      const PERM_REQUEST = 32;
+      const PERM_AUTO_APPROVE = 128;
+      const PERM_AUTO_APPROVE_MOVIE = 256;
+      const PERM_AUTO_APPROVE_TV = 512;
+      const PERM_REQUEST_VIEW = 16384;
+      const PERM_AUTO_APPROVE_4K = 32768;
+      const PERM_AUTO_APPROVE_4K_MOVIE = 65536;
+      const PERM_AUTO_APPROVE_4K_TV = 131072;
+      const PERM_REQUEST_MOVIE = 262144;
+      const PERM_REQUEST_TV = 524288;
+
+      const REQUIRED_PERMS = PERM_REQUEST | PERM_REQUEST_MOVIE | PERM_REQUEST_TV | PERM_REQUEST_VIEW;
+      const FORBIDDEN_AUTO_APPROVE =
+        PERM_ADMIN |
+        PERM_MANAGE_REQUESTS |
+        PERM_AUTO_APPROVE |
+        PERM_AUTO_APPROVE_MOVIE |
+        PERM_AUTO_APPROVE_TV |
+        PERM_AUTO_APPROVE_4K |
+        PERM_AUTO_APPROVE_4K_MOVIE |
+        PERM_AUTO_APPROVE_4K_TV;
+
+      const data = await this.request<{ permissions?: number }>(`/user/${userId}/settings/permissions`);
+      const currentPerms = typeof data?.permissions === 'number' ? data.permissions : 0;
+      const desiredPerms = (currentPerms | REQUIRED_PERMS) & ~FORBIDDEN_AUTO_APPROVE;
+
+      if (desiredPerms !== currentPerms) {
+        await this.request(`/user/${userId}/settings/permissions`, {
+          method: 'POST',
+          body: JSON.stringify({ permissions: desiredPerms }),
+        });
+      }
+    } catch {
+      // Ignorer si l'endpoint de permissions n'est pas accessible
+    }
+  }
+
+  /**
+   * Créer une demande de film ou série dans Overseerr / Jellyseerr / Seerr
    */
   public static async createRequest(params: {
     mediaType: 'movie' | 'tv';
@@ -212,7 +258,9 @@ export class SeerService {
     }
 
     const defaultUserId = getSetting('SEER_DEFAULT_USER_ID');
-    const effectiveUserId = params.userId || (defaultUserId ? parseInt(defaultUserId, 10) : undefined);
+    const parsedDefaultId = defaultUserId ? parseInt(defaultUserId, 10) : undefined;
+    // Priorité au compte configuré dans les paramètres Seer (ex: TV ID 3) pour garantir la mise en attente d'approbation
+    const effectiveUserId = parsedDefaultId || params.userId;
 
     const payload: any = {
       mediaType: params.mediaType,
@@ -220,13 +268,8 @@ export class SeerService {
       is4k: Boolean(params.is4k),
     };
 
-    if (effectiveUserId) {
-      payload.userId = effectiveUserId;
-    }
-
     if (params.mediaType === 'tv') {
       if (params.seasons === 'all' || !params.seasons) {
-        // Sur certaines versions récentes de Seerr (v3+), seasons: 'all' peut nécessiter la liste explicite des numéros de saisons
         try {
           const tvInfo = await this.request<any>(`/tv/${params.mediaId}`);
           if (Array.isArray(tvInfo?.seasons)) {
@@ -245,40 +288,36 @@ export class SeerService {
       }
     }
 
-    try {
-      return await this.request<any>('/request', {
-        method: 'POST',
-        body: JSON.stringify(payload),
-      });
-    } catch (err: any) {
-      const msg = String(err?.message || '');
-      // Si l'erreur 403 provient de l'usurpation d'un userId secondaire (ex: ID 3 sans permission REQUEST ou clé non-admin),
-      // on réessaie automatiquement sans userId (avec le compte propriétaire de la clé API).
-      if (msg.includes('403') && payload.userId) {
-        const fallbackPayload = { ...payload };
-        delete fallbackPayload.userId;
-        try {
-          return await this.request<any>('/request', {
-            method: 'POST',
-            body: JSON.stringify(fallbackPayload),
-          });
-        } catch (retryErr: any) {
-          const retryMsg = String(retryErr?.message || '');
-          if (retryMsg.includes('403')) {
-            throw new Error(
-              'Erreur Seer (403) : La Clé API Seer enregistrée est invalide ou n\'a pas la permission de créer des demandes. Allez dans Paramètres > Serveurs & API, recollez votre Clé API Seer (depuis Seer > Settings > General) et cliquez sur Enregistrer.'
-            );
-          }
-          throw retryErr;
-        }
-      }
+    // Si un utilisateur Seer spécifique (ex: TV, ID: 3) est configuré :
+    // 1. On ajuste ses permissions dans Seer (droit Request activé + Auto-Approve désactivé)
+    // 2. On envoie l'en-tête HTTP `X-Api-User: <id>` pour que Seer évalue `req.user` en tant que cet utilisateur
+    //    (contourne le bug Overseerr/Jellyseerr #4324 où `body.userId` seul utilise les droits Auto-Approve de l'Admin)
+    if (effectiveUserId) {
+      await this.ensureRequesterPermissions(effectiveUserId);
 
-      if (msg.includes('403')) {
-        throw new Error(
-          'Erreur Seer (403) : La Clé API Seer enregistrée est invalide ou n\'a pas la permission de créer des demandes. Allez dans Paramètres > Serveurs & API, recollez votre Clé API Seer (depuis Seer > Settings > General) et cliquez sur Enregistrer.'
-        );
+      try {
+        return await this.request<any>('/request', {
+          method: 'POST',
+          headers: {
+            'X-Api-User': String(effectiveUserId),
+          },
+          body: JSON.stringify(payload),
+        });
+      } catch (firstErr: any) {
+        // Fallback : passer aussi userId dans le body si X-Api-User seul a été refusé
+        return await this.request<any>('/request', {
+          method: 'POST',
+          headers: {
+            'X-Api-User': String(effectiveUserId),
+          },
+          body: JSON.stringify({ ...payload, userId: effectiveUserId }),
+        });
       }
-      throw err;
     }
+
+    return await this.request<any>('/request', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
   }
 }
