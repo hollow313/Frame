@@ -26,6 +26,19 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const status = await api.getAuthStatus();
       setIsInitialized(status.initialized);
 
+      // Si le portail SSO / Reverse Proxy identifie l'utilisateur courant (User A ou User B),
+      // synchroniser immédiatement son jeton de session pour éviter tout conflit avec un ancien compte local
+      if (status.ssoUser) {
+        try {
+          const ssoRes = await api.loginSso();
+          if (ssoRes?.token) {
+            setToken(ssoRes.token);
+          }
+        } catch {
+          // Ignorer et laisser getMe tenter la récupération
+        }
+      }
+
       try {
         const me: any = await api.getMe();
         if (me?.token) {
@@ -34,21 +47,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setUser(me);
       } catch (e: any) {
         setToken(null);
-        // Si un utilisateur SSO spécifique est identifié par l'en-tête du reverse proxy (ex: Remote-User),
-        // initialiser automatiquement sa session propre
-        if (status.ssoUser) {
-          try {
-            const ssoRes = await api.loginSso();
-            if (ssoRes?.token) {
-              setToken(ssoRes.token);
-            }
-            const meRetry: any = await api.getMe();
-            setUser(meRetry);
-            return;
-          } catch {
-            // Ignorer
-          }
-        }
         if (e?.status === 401) {
           setUser(null);
         }

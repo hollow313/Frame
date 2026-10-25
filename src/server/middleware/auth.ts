@@ -13,14 +13,15 @@ export interface AuthUser {
 export interface AuthenticatedRequest extends Request {
   user?: AuthUser;
   ssoAuthenticated?: boolean;
+  ssoCookieHash?: string;
 }
 
 /**
- * Extrait et valide l'utilisateur courant à partir de l'en-tête SSO (si présent), du cookie ou de l'en-tête Authorization,
+ * Extrait et valide l'utilisateur courant à partir de l'en-tête/session SSO (si présent), du cookie ou de l'en-tête Authorization,
  * puis vérifie son existence et son rôle en temps réel dans SQLite (F-05, D-05).
  */
 export function extractUser(req: AuthenticatedRequest): AuthUser | null {
-  // Si le reverse proxy a explicitement identifié l'utilisateur courant via un en-tête SSO (ex: Remote-User),
+  // Si le middleware SSO a explicitement identifié l'utilisateur courant (via en-tête ou cookie SSO),
   // cet utilisateur prime sur tout éventuel ancien cookie JWT d'un autre compte.
   if (req.ssoAuthenticated && req.user) {
     const dbUser = db
@@ -47,7 +48,17 @@ export function extractUser(req: AuthenticatedRequest): AuthUser | null {
     try {
       const secret = getSetting('JWT_SECRET');
       if (secret) {
-        const payload = jwt.verify(token, secret) as { id: number };
+        const payload = jwt.verify(token, secret) as { id: number; ssoHash?: string };
+        // Si la session SSO du navigateur a changé (ex: passage de User A à User B sur le portail SSO),
+        // invalider immédiatement le token de l'ancien utilisateur.
+        if (
+          getSetting('SSO_ENABLED') === 'true' &&
+          payload?.ssoHash &&
+          req.ssoCookieHash &&
+          payload.ssoHash !== req.ssoCookieHash
+        ) {
+          return null;
+        }
         if (payload && typeof payload.id === 'number') {
           const dbUser = db
             .prepare('SELECT id, username, role, display_name FROM users WHERE id = ?')
@@ -111,7 +122,7 @@ export function requireAdmin(req: AuthenticatedRequest, res: Response, next: Nex
   next();
 }
 
-export function generateToken(user: AuthUser): string {
+export function generateToken(user: AuthUser, ssoCookieHash?: string): string {
   const secret = getSetting('JWT_SECRET');
   return jwt.sign(
     {
@@ -119,6 +130,7 @@ export function generateToken(user: AuthUser): string {
       username: user.username,
       role: user.role,
       displayName: user.displayName,
+      ...(ssoCookieHash ? { ssoHash: ssoCookieHash } : {}),
     },
     secret,
     { expiresIn: '365d' }

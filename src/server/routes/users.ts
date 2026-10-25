@@ -63,6 +63,10 @@ router.post('/sync-ldap', async (_req: AuthenticatedRequest, res: Response) => {
     }
 
     const syncRes = await LdapService.syncUsersFromLdap();
+    if (syncRes.error) {
+      res.status(400).json({ error: syncRes.error });
+      return;
+    }
     res.json({
       success: true,
       totalLdapUsers: syncRes.totalLdapUsers,

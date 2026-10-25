@@ -104,34 +104,16 @@ router.get('/status', async (req: AuthenticatedRequest, res: Response) => {
  */
 router.post('/sso', (req: AuthenticatedRequest, res: Response) => {
   try {
-    const ssoEnabled = getSetting('SSO_ENABLED') === 'true';
-    let targetUser = req.user;
-
-    // Si le reverse proxy n'a pas injecté l'en-tête Remote-User mais que le SSO est actif et que l'utilisateur a choisi son profil
-    if (!targetUser && ssoEnabled && req.body?.userId) {
-      const dbUser = db
-        .prepare('SELECT id, username, role, display_name FROM users WHERE id = ?')
-        .get(Number(req.body.userId)) as { id: number; username: string; role: 'admin' | 'user'; display_name?: string } | undefined;
-      if (dbUser) {
-        targetUser = {
-          id: dbUser.id,
-          username: dbUser.username,
-          role: dbUser.role,
-          displayName: dbUser.display_name,
-        };
-      }
-    }
-
-    if (!targetUser) {
+    if (!req.user) {
       res.status(401).json({ error: 'Aucune session SSO active détectée.' });
       return;
     }
 
-    const token = generateToken(targetUser);
+    const token = generateToken(req.user, req.ssoCookieHash);
     res.clearCookie('frame_sso_logout', { path: '/' });
     res.cookie('frame_token', token, getCookieOpts(req));
     res.json({
-      user: targetUser,
+      user: req.user,
       token,
     });
   } catch (err: any) {
@@ -358,12 +340,15 @@ router.post('/login', loginLimiter, async (req: Request, res: Response) => {
       createdAt: userRow.created_at,
     };
 
-    const token = generateToken({
-      id: userRow.id,
-      username: userRow.username,
-      role: userRow.role,
-      displayName: userRow.display_name,
-    });
+    const token = generateToken(
+      {
+        id: userRow.id,
+        username: userRow.username,
+        role: userRow.role,
+        displayName: userRow.display_name,
+      },
+      (req as AuthenticatedRequest).ssoCookieHash
+    );
 
     res.cookie('frame_token', token, getCookieOpts(req));
 
@@ -398,12 +383,15 @@ router.get('/me', authenticateToken, (req: AuthenticatedRequest, res: Response) 
       return;
     }
 
-    const freshToken = generateToken({
-      id: userRow.id,
-      username: userRow.username,
-      role: userRow.role,
-      displayName: userRow.display_name,
-    });
+    const freshToken = generateToken(
+      {
+        id: userRow.id,
+        username: userRow.username,
+        role: userRow.role,
+        displayName: userRow.display_name,
+      },
+      req.ssoCookieHash
+    );
     res.cookie('frame_token', freshToken, getCookieOpts(req));
 
     res.json({
@@ -463,12 +451,9 @@ router.put('/preferences', authenticateToken, (req: AuthenticatedRequest, res: R
 /**
  * Déconnexion
  */
-router.post('/logout', (req: Request, res: Response) => {
+router.post('/logout', (_req: Request, res: Response) => {
   res.clearCookie('frame_token', { path: '/' });
-  res.cookie('frame_sso_logout', '1', {
-    ...getCookieOpts(req),
-    maxAge: 10 * 60 * 1000,
-  });
+  res.clearCookie('frame_sso_logout', { path: '/' });
   res.json({ success: true });
 });
 

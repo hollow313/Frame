@@ -70,6 +70,7 @@ export class LdapService {
     totalLdapUsers: number;
     importedCount: number;
     users: LdapUserProfile[];
+    error?: string;
   }> {
     if (!this.isEnabled()) {
       return { totalLdapUsers: 0, importedCount: 0, users: [] };
@@ -84,7 +85,14 @@ export class LdapService {
       '(&(objectClass=person)(|(uid={{username}})(cn={{username}})(mail={{username}})))';
 
     if (!url || !baseDn || !bindDn || !bindPass) {
-      return { totalLdapUsers: 0, importedCount: 0, users: [] };
+      return {
+        totalLdapUsers: 0,
+        importedCount: 0,
+        users: [],
+        error: !bindPass
+          ? 'Mot de passe Bind LDAP non enregistré dans Paramètres → Sécurité & Authentification.'
+          : 'Configuration LDAP incomplète (URL, Base DN ou Bind DN manquant).',
+      };
     }
 
     const client = new Client({
@@ -102,22 +110,153 @@ export class LdapService {
         ? filterTemplate.replace(/\{\{username\}\}/g, '*')
         : filterTemplate;
 
-      const { searchEntries } = await client.search(baseDn, {
-        scope: 'sub',
-        filter: listFilter,
-        attributes: ['dn', 'uid', 'cn', 'displayName', 'mail'],
-      });
+      const userAttributes = ['uid', 'user_id', 'sAMAccountName', 'cn', 'displayName', 'mail', 'memberOf', 'isMemberOf'];
+      let matchedEntries: any[] = [];
+
+      // 1. Recherche directe avec le filtre configuré sur baseDn et ou=people,baseDn
+      const candidateBases = baseDn.toLowerCase().startsWith('ou=')
+        ? [baseDn]
+        : [baseDn, `ou=people,${baseDn}`, `ou=users,${baseDn}`];
+
+      for (const searchBase of candidateBases) {
+        try {
+          const { searchEntries } = await client.search(searchBase, {
+            scope: 'sub',
+            filter: listFilter,
+            attributes: userAttributes,
+          });
+          if (searchEntries && searchEntries.length > 0) {
+            matchedEntries.push(...searchEntries);
+            break;
+          }
+        } catch {
+          // Continuer vers la base suivante
+        }
+      }
+
+      // 2. Fallback LLDAP / OpenLDAP : si le filtre porte sur un groupe (ex: memberOf=cn=Frame,ou=groups,...)
+      // et que la recherche directe n'a rien renvoyé (ex: casse du groupe cn=frame vs cn=Frame ou overlay memberOf),
+      // on récupère les membres du groupe et les utilisateurs pour filtrer de manière insensible à la casse.
+      const memberOfMatch = /memberOf=([^)]+)/i.exec(filterTemplate);
+      if (matchedEntries.length === 0 && memberOfMatch) {
+        const targetGroupDn = memberOfMatch[1].trim().toLowerCase();
+        const cnMatch = /cn=([^,)]+)/i.exec(targetGroupDn);
+        const targetGroupCn = cnMatch ? cnMatch[1].trim().toLowerCase() : '';
+
+        // 2a. Chercher les membres déclarés dans l'entrée du groupe (ou=groups)
+        const groupMemberDns = new Set<string>();
+        const groupMemberUids = new Set<string>();
+        const groupBases = baseDn.toLowerCase().startsWith('ou=')
+          ? [baseDn]
+          : [`ou=groups,${baseDn}`, baseDn];
+
+        for (const gBase of groupBases) {
+          try {
+            const { searchEntries: groupEntries } = await client.search(gBase, {
+              scope: 'sub',
+              filter: targetGroupCn ? `(cn=${escapeLdapFilter(targetGroupCn)})` : '(objectClass=*)',
+              attributes: ['cn', 'member', 'uniqueMember', 'memberUid'],
+            });
+            for (const gEntry of groupEntries) {
+              const gCnRaw = gEntry.cn;
+              const gCn = (Array.isArray(gCnRaw) ? String(gCnRaw[0]) : String(gCnRaw || '')).trim().toLowerCase();
+              const gDn = String(gEntry.dn || '').trim().toLowerCase();
+              if (
+                (targetGroupCn && gCn === targetGroupCn) ||
+                (targetGroupDn && gDn === targetGroupDn)
+              ) {
+                const rawMembers = [
+                  ...(Array.isArray(gEntry.member) ? gEntry.member : gEntry.member ? [gEntry.member] : []),
+                  ...(Array.isArray(gEntry.uniqueMember) ? gEntry.uniqueMember : gEntry.uniqueMember ? [gEntry.uniqueMember] : []),
+                  ...(Array.isArray(gEntry.memberUid) ? gEntry.memberUid : gEntry.memberUid ? [gEntry.memberUid] : []),
+                ];
+                for (const m of rawMembers) {
+                  const mStr = String(m).trim().toLowerCase();
+                  if (!mStr) continue;
+                  groupMemberDns.add(mStr);
+                  const mUidMatch = /^(?:uid|cn)=([^,]+)/i.exec(mStr);
+                  if (mUidMatch) {
+                    groupMemberUids.add(mUidMatch[1].trim().toLowerCase());
+                  } else if (!mStr.includes('=')) {
+                    groupMemberUids.add(mStr);
+                  }
+                }
+              }
+            }
+          } catch {
+            // Ignorer
+          }
+        }
+
+        // 2b. Parcourir tous les utilisateurs (ou=people / baseDn) et filtrer ceux appartenant au groupe
+        for (const searchBase of candidateBases) {
+          try {
+            const { searchEntries: allUsers } = await client.search(searchBase, {
+              scope: 'sub',
+              filter: '(objectClass=person)',
+              attributes: userAttributes,
+            });
+            for (const uEntry of allUsers) {
+              const entryDn = String(uEntry.dn || '').trim().toLowerCase();
+              const dnUidMatch = /^(?:uid|cn)=([^,]+)/i.exec(entryDn);
+              const entryUid = (
+                (Array.isArray(uEntry.uid) ? uEntry.uid[0] : uEntry.uid) ||
+                (dnUidMatch ? dnUidMatch[1] : '') ||
+                ''
+              )
+                .toString()
+                .trim()
+                .toLowerCase();
+
+              const rawMemberOf = uEntry.memberOf || uEntry.isMemberOf;
+              const memberOfList = (
+                Array.isArray(rawMemberOf)
+                  ? rawMemberOf
+                  : rawMemberOf
+                  ? [rawMemberOf]
+                  : []
+              ).map((x) => String(x).trim().toLowerCase());
+
+              const matchesMemberOf = memberOfList.some(
+                (m) =>
+                  m === targetGroupDn ||
+                  (targetGroupCn && m.includes(`cn=${targetGroupCn},`)) ||
+                  (targetGroupCn && m === targetGroupCn)
+              );
+              const matchesGroupList =
+                (entryDn && groupMemberDns.has(entryDn)) ||
+                (entryUid && groupMemberUids.has(entryUid));
+
+              if (matchesMemberOf || matchesGroupList) {
+                matchedEntries.push(uEntry);
+              }
+            }
+            if (matchedEntries.length > 0) break;
+          } catch {
+            // Continuer
+          }
+        }
+      }
 
       await client.unbind();
 
       const profiles: LdapUserProfile[] = [];
+      const seenUsernames = new Set<string>();
       let importedCount = 0;
 
-      for (const entry of searchEntries) {
-        const rawUid = entry.uid || entry.cn;
+      for (const entry of matchedEntries) {
+        // Extraire l'identifiant (uid) depuis entry.uid, ou depuis le DN (ex: uid=alex,ou=people,dc=...), ou entry.cn
+        const dnUidMatch = /^(?:uid|cn)=([^,]+)/i.exec(String(entry.dn || ''));
+        const rawUid =
+          entry.uid ||
+          entry.user_id ||
+          entry.sAMAccountName ||
+          (dnUidMatch ? dnUidMatch[1] : undefined) ||
+          entry.cn;
         if (!rawUid) continue;
-        const uidStr = (Array.isArray(rawUid) ? rawUid[0] : String(rawUid)).trim().toLowerCase();
-        if (!uidStr || !/^[a-zA-Z0-9._@-]{1,64}$/.test(uidStr)) continue;
+        const uidStr = (Array.isArray(rawUid) ? String(rawUid[0]) : String(rawUid)).trim().toLowerCase();
+        if (!uidStr || !/^[a-zA-Z0-9._@-]{1,64}$/.test(uidStr) || seenUsernames.has(uidStr)) continue;
+        seenUsernames.add(uidStr);
 
         const rawDisplay = entry.displayName || entry.cn || uidStr;
         const displayName = Array.isArray(rawDisplay) ? String(rawDisplay[0]) : String(rawDisplay);
@@ -140,8 +279,13 @@ export class LdapService {
              VALUES (?, ?, ?, ?, 'ldap')`
           ).run(uidStr, dummyHash, role, displayName);
           importedCount++;
-        } else if (!existing.display_name && displayName) {
-          db.prepare('UPDATE users SET display_name = ? WHERE id = ?').run(displayName, existing.id);
+        } else {
+          if (!existing.display_name && displayName) {
+            db.prepare('UPDATE users SET display_name = ? WHERE id = ?').run(displayName, existing.id);
+          }
+          if (existing.auth_provider !== 'ldap') {
+            db.prepare("UPDATE users SET auth_provider = 'ldap' WHERE id = ?").run(existing.id);
+          }
         }
       }
 
@@ -161,7 +305,12 @@ export class LdapService {
         // Ignorer
       }
       logger.warn('LDAP', 'Impossible de synchroniser la liste des utilisateurs LDAP', { error: err?.message });
-      return { totalLdapUsers: 0, importedCount: 0, users: [] };
+      return {
+        totalLdapUsers: 0,
+        importedCount: 0,
+        users: [],
+        error: err?.message || 'Erreur de connexion au serveur LDAP.',
+      };
     }
   }
 

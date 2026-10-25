@@ -1037,11 +1037,28 @@ export const Settings: React.FC = () => {
                   />
                 </div>
                 <div>
-                  <label className="text-xs font-medium text-slate-400 block mb-1">Mot de passe Bind</label>
+                  <label className="text-xs font-medium text-slate-400 flex items-center justify-between mb-1">
+                    <span>Mot de passe Bind</span>
+                    {configuredSecrets.LDAP_BIND_PASSWORD ? (
+                      <span className="text-[11px] font-bold text-emerald-400 flex items-center gap-1">
+                        <CheckCircle2 className="w-3.5 h-3.5" /> Enregistré
+                      </span>
+                    ) : (
+                      <span className="text-[11px] font-bold text-amber-400">
+                        ⚠️ À renseigner
+                      </span>
+                    )}
+                  </label>
                   <input
                     type="password"
                     value={ldapBindPassword}
-                    onChange={(e) => setLdapBindPassword(e.target.value)}
+                    onFocus={() => {
+                      if (ldapBindPassword.includes('••')) setLdapBindPassword('');
+                    }}
+                    onBlur={() => {
+                      if (!ldapBindPassword.trim() && configuredSecrets.LDAP_BIND_PASSWORD) setLdapBindPassword('••••••••••••••••');
+                    }}
+                    onChange={(e) => setLdapBindPassword(e.target.value.replace(/•+/g, ''))}
                     placeholder={configuredSecrets.LDAP_BIND_PASSWORD ? '•••••••• (Configuré)' : 'Mot de passe bind...'}
                     className="w-full bg-dark-850 border border-white/10 rounded-xl px-3 py-2 text-xs text-slate-100"
                   />
