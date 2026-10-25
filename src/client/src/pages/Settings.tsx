@@ -215,11 +215,17 @@ export const Settings: React.FC = () => {
         SSO_HEADER: ssoHeader,
         SSO_TRUSTED_PROXIES: ssoTrustedProxies,
       };
-      if (tmdbKey.trim() && !tmdbKey.includes('••••')) payload.TMDB_API_KEY = tmdbKey.trim();
-      if (seerApiKey.trim() && !seerApiKey.includes('••••')) payload.SEER_API_KEY = seerApiKey.trim();
-      if (sonarrApiKey.trim() && !sonarrApiKey.includes('••••')) payload.SONARR_API_KEY = sonarrApiKey.trim();
-      if (radarrApiKey.trim() && !radarrApiKey.includes('••••')) payload.RADARR_API_KEY = radarrApiKey.trim();
-      if (ldapBindPassword.trim() && !ldapBindPassword.includes('••••')) payload.LDAP_BIND_PASSWORD = ldapBindPassword.trim();
+      const cleanTmdb = tmdbKey.replace(/•+/g, '').trim();
+      const cleanSeer = seerApiKey.replace(/•+/g, '').trim();
+      const cleanSonarr = sonarrApiKey.replace(/•+/g, '').trim();
+      const cleanRadarr = radarrApiKey.replace(/•+/g, '').trim();
+      const cleanLdap = ldapBindPassword.replace(/•+/g, '').trim();
+
+      if (cleanTmdb) payload.TMDB_API_KEY = cleanTmdb;
+      if (cleanSeer) payload.SEER_API_KEY = cleanSeer;
+      if (cleanSonarr) payload.SONARR_API_KEY = cleanSonarr;
+      if (cleanRadarr) payload.RADARR_API_KEY = cleanRadarr;
+      if (cleanLdap) payload.LDAP_BIND_PASSWORD = cleanLdap;
 
       await api.updateSettings(payload);
       setSaveSuccess(true);
@@ -233,7 +239,30 @@ export const Settings: React.FC = () => {
   const handleTestService = async (service: 'tmdb' | 'seer' | 'sonarr' | 'radarr' | 'ldap' | 'jellyfin') => {
     setTestResults((prev) => ({ ...prev, [service]: { loading: true } }));
     try {
-      const res = await api.testService(service);
+      const currentSettings: Record<string, string> = {
+        SEER_URL: seerUrl,
+        SEER_DEFAULT_USER_ID: seerDefaultUserId,
+        SONARR_URL: sonarrUrl,
+        RADARR_URL: radarrUrl,
+        JELLYFIN_URL: jellyfinUrl,
+        LDAP_URL: ldapUrl,
+        LDAP_BASE_DN: ldapBaseDn,
+        LDAP_BIND_DN: ldapBindDn,
+        LDAP_SEARCH_FILTER: ldapSearchFilter,
+      };
+      const cleanTmdb = tmdbKey.replace(/•+/g, '').trim();
+      const cleanSeer = seerApiKey.replace(/•+/g, '').trim();
+      const cleanSonarr = sonarrApiKey.replace(/•+/g, '').trim();
+      const cleanRadarr = radarrApiKey.replace(/•+/g, '').trim();
+      const cleanLdap = ldapBindPassword.replace(/•+/g, '').trim();
+
+      if (cleanTmdb) currentSettings.TMDB_API_KEY = cleanTmdb;
+      if (cleanSeer) currentSettings.SEER_API_KEY = cleanSeer;
+      if (cleanSonarr) currentSettings.SONARR_API_KEY = cleanSonarr;
+      if (cleanRadarr) currentSettings.RADARR_API_KEY = cleanRadarr;
+      if (cleanLdap) currentSettings.LDAP_BIND_PASSWORD = cleanLdap;
+
+      const res = await api.testService(service, currentSettings);
       setTestResults((prev) => ({
         ...prev,
         [service]: { loading: false, success: res.success, message: res.message },
@@ -241,6 +270,7 @@ export const Settings: React.FC = () => {
       if (service === 'seer' && res.success) {
         api.getSeerUsers().then((u) => setSeerUsers(u)).catch(() => {});
       }
+      loadSettings();
     } catch (err: any) {
       setTestResults((prev) => ({
         ...prev,
@@ -639,7 +669,13 @@ export const Settings: React.FC = () => {
               <input
                 type="password"
                 value={tmdbKey}
-                onChange={(e) => setTmdbKey(e.target.value)}
+                onFocus={() => {
+                  if (tmdbKey.includes('••')) setTmdbKey('');
+                }}
+                onBlur={() => {
+                  if (!tmdbKey.trim() && configuredSecrets.TMDB_API_KEY) setTmdbKey('••••••••••••••••');
+                }}
+                onChange={(e) => setTmdbKey(e.target.value.replace(/•+/g, ''))}
                 placeholder={configuredSecrets.TMDB_API_KEY ? '•••••••• (Déjà configurée — laisser vide pour conserver)' : 'Ex: 3a2b1c...'}
                 className="w-full bg-dark-850 border border-white/10 rounded-xl px-3.5 py-2 text-sm text-slate-100 focus:outline-none focus:border-primary-500"
               />
@@ -743,8 +779,14 @@ export const Settings: React.FC = () => {
                 <input
                   type="password"
                   value={seerApiKey}
-                  onChange={(e) => setSeerApiKey(e.target.value)}
-                  placeholder={configuredSecrets.SEER_API_KEY ? '•••••••• (Déjà configurée — laisser vide pour conserver)' : 'Clé API Seer...'}
+                  onFocus={() => {
+                    if (seerApiKey.includes('••')) setSeerApiKey('');
+                  }}
+                  onBlur={() => {
+                    if (!seerApiKey.trim() && configuredSecrets.SEER_API_KEY) setSeerApiKey('••••••••••••••••');
+                  }}
+                  onChange={(e) => setSeerApiKey(e.target.value.replace(/•+/g, ''))}
+                  placeholder={configuredSecrets.SEER_API_KEY ? '•••••••• (Déjà configurée — cliquer pour coller une nouvelle clé)' : 'Clé API Seer...'}
                   className="w-full bg-dark-850 border border-white/10 rounded-xl px-3.5 py-2 text-sm text-slate-100 focus:outline-none focus:border-primary-500"
                 />
               </div>
@@ -812,7 +854,13 @@ export const Settings: React.FC = () => {
               <input
                 type="password"
                 value={sonarrApiKey}
-                onChange={(e) => setSonarrApiKey(e.target.value)}
+                onFocus={() => {
+                  if (sonarrApiKey.includes('••')) setSonarrApiKey('');
+                }}
+                onBlur={() => {
+                  if (!sonarrApiKey.trim() && configuredSecrets.SONARR_API_KEY) setSonarrApiKey('••••••••••••••••');
+                }}
+                onChange={(e) => setSonarrApiKey(e.target.value.replace(/•+/g, ''))}
                 placeholder={configuredSecrets.SONARR_API_KEY ? '•••••••• (Configuré)' : 'Clé API Sonarr...'}
                 className="w-full bg-dark-850 border border-white/10 rounded-xl px-3 py-1.5 text-xs text-slate-100 focus:outline-none"
               />
@@ -865,7 +913,13 @@ export const Settings: React.FC = () => {
               <input
                 type="password"
                 value={radarrApiKey}
-                onChange={(e) => setRadarrApiKey(e.target.value)}
+                onFocus={() => {
+                  if (radarrApiKey.includes('••')) setRadarrApiKey('');
+                }}
+                onBlur={() => {
+                  if (!radarrApiKey.trim() && configuredSecrets.RADARR_API_KEY) setRadarrApiKey('••••••••••••••••');
+                }}
+                onChange={(e) => setRadarrApiKey(e.target.value.replace(/•+/g, ''))}
                 placeholder={configuredSecrets.RADARR_API_KEY ? '•••••••• (Configuré)' : 'Clé API Radarr...'}
                 className="w-full bg-dark-850 border border-white/10 rounded-xl px-3 py-1.5 text-xs text-slate-100 focus:outline-none"
               />

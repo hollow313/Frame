@@ -117,10 +117,40 @@ router.put('/', authenticateToken, requireAdmin, (req: AuthenticatedRequest, res
 
 /**
  * Tester la connexion aux services externes (TMDB, Seer, Sonarr, Radarr, LDAP, Jellyfin)
+ * Si des paramètres modifiés sont transmis dans req.body.settings, les persister avant le test.
  */
 router.post('/test', authenticateToken, requireAdmin, async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const { service } = req.body;
+    const { service, settings } = req.body;
+
+    if (settings && typeof settings === 'object') {
+      const validKeys: SettingKey[] = [
+        'TMDB_API_KEY',
+        'SEER_URL',
+        'SEER_API_KEY',
+        'SEER_DEFAULT_USER_ID',
+        'SONARR_URL',
+        'SONARR_API_KEY',
+        'RADARR_URL',
+        'RADARR_API_KEY',
+        'JELLYFIN_URL',
+        'LDAP_URL',
+        'LDAP_BASE_DN',
+        'LDAP_BIND_DN',
+        'LDAP_BIND_PASSWORD',
+        'LDAP_SEARCH_FILTER',
+      ];
+      for (const key of validKeys) {
+        if (typeof settings[key] === 'string') {
+          const cleaned = SECRET_KEYS.has(key)
+            ? settings[key].replace(/•+/g, '').trim()
+            : settings[key].trim();
+          if (cleaned && !cleaned.includes('••••') && !cleaned.includes('...')) {
+            setSetting(key, cleaned);
+          }
+        }
+      }
+    }
 
     if (service === 'tmdb') {
       await TMDBService.getTrending('day', 1);

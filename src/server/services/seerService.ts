@@ -53,12 +53,28 @@ export class SeerService {
   }
 
   /**
-   * Tester la connexion avec Overseerr/Jellyseerr
+   * Tester la connexion ET la validité de la Clé API avec Overseerr/Jellyseerr/Seerr
+   * Note : /api/v1/status est public sur Seerr et ne vérifie pas X-Api-Key.
+   * On vérifie donc aussi /api/v1/auth/me pour valider que la clé API a bien les droits d'accès.
    */
   public static async testConnection(): Promise<{ success: boolean; version?: string; message: string }> {
     try {
       const status = await this.request<{ version: string }>('/status');
-      return { success: true, version: status.version, message: `Connexion réussie (v${status.version})` };
+      try {
+        const me = await this.request<{ id?: number; displayName?: string; username?: string; email?: string }>('/auth/me');
+        const accountLabel = me?.displayName || me?.username || me?.email || 'Admin';
+        return {
+          success: true,
+          version: status.version,
+          message: `Connexion et Clé API valides (v${status.version} • Compte: ${accountLabel})`,
+        };
+      } catch (authErr: any) {
+        return {
+          success: false,
+          version: status.version,
+          message: `Serveur Seer joint (v${status.version}), mais la Clé API Seer est refusée (403). Recollez la Clé API principale depuis Seer (Settings > General) puis cliquez sur Enregistrer.`,
+        };
+      }
     } catch (err: any) {
       return { success: false, message: err.message || 'Échec de connexion' };
     }
@@ -210,15 +226,59 @@ export class SeerService {
 
     if (params.mediaType === 'tv') {
       if (params.seasons === 'all' || !params.seasons) {
-        payload.seasons = 'all';
+        // Sur certaines versions récentes de Seerr (v3+), seasons: 'all' peut nécessiter la liste explicite des numéros de saisons
+        try {
+          const tvInfo = await this.request<any>(`/tv/${params.mediaId}`);
+          if (Array.isArray(tvInfo?.seasons)) {
+            const seasonNums = tvInfo.seasons
+              .map((s: any) => Number(s.seasonNumber ?? s.season_number))
+              .filter((n: number) => !isNaN(n) && n > 0);
+            payload.seasons = seasonNums.length > 0 ? seasonNums : 'all';
+          } else {
+            payload.seasons = 'all';
+          }
+        } catch {
+          payload.seasons = 'all';
+        }
       } else {
         payload.seasons = params.seasons;
       }
     }
 
-    return this.request<any>('/request', {
-      method: 'POST',
-      body: JSON.stringify(payload),
-    });
+    try {
+      return await this.request<any>('/request', {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      });
+    } catch (err: any) {
+      const msg = String(err?.message || '');
+      // Si l'erreur 403 provient de l'usurpation d'un userId secondaire (ex: ID 3 sans permission REQUEST ou clé non-admin),
+      // on réessaie automatiquement sans userId (avec le compte propriétaire de la clé API).
+      if (msg.includes('403') && payload.userId) {
+        const fallbackPayload = { ...payload };
+        delete fallbackPayload.userId;
+        try {
+          return await this.request<any>('/request', {
+            method: 'POST',
+            body: JSON.stringify(fallbackPayload),
+          });
+        } catch (retryErr: any) {
+          const retryMsg = String(retryErr?.message || '');
+          if (retryMsg.includes('403')) {
+            throw new Error(
+              'Erreur Seer (403) : La Clé API Seer enregistrée est invalide ou n\'a pas la permission de créer des demandes. Allez dans Paramètres > Serveurs & API, recollez votre Clé API Seer (depuis Seer > Settings > General) et cliquez sur Enregistrer.'
+            );
+          }
+          throw retryErr;
+        }
+      }
+
+      if (msg.includes('403')) {
+        throw new Error(
+          'Erreur Seer (403) : La Clé API Seer enregistrée est invalide ou n\'a pas la permission de créer des demandes. Allez dans Paramètres > Serveurs & API, recollez votre Clé API Seer (depuis Seer > Settings > General) et cliquez sur Enregistrer.'
+        );
+      }
+      throw err;
+    }
   }
 }

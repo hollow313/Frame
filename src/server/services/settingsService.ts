@@ -54,6 +54,17 @@ const INSECURE_JWT_DEFAULTS = new Set([
   'changez_cette_cle_secrete_en_production',
 ]);
 
+/**
+ * Détecte si une clé secrète stockée est en réalité un masque tronqué issu d'une ancienne version
+ * (ex: "abcd...wxyz" ou "••••••••") afin de ne pas la considérer comme une clé valide.
+ */
+function isCorruptedSecretMask(key: string, val: string): boolean {
+  if (!SECRET_KEYS.has(key as SettingKey)) return false;
+  if (!val) return true;
+  if (val.includes('••') || val.includes('...')) return true;
+  return false;
+}
+
 const DEFAULTS: Partial<Record<SettingKey, string>> = {
   DEFAULT_LANGUAGE: 'fr-FR',
   ALLOW_REGISTRATION: 'false',
@@ -79,7 +90,10 @@ function ensureCacheLoaded(): Map<string, string> {
         if (parsed && typeof parsed === 'object') {
           for (const [k, v] of Object.entries(parsed)) {
             if (typeof v === 'string' && v.trim() !== '') {
-              settingsCache.set(k, decryptSecret(v.trim()));
+              const dec = decryptSecret(v.trim());
+              if (!isCorruptedSecretMask(k, dec)) {
+                settingsCache.set(k, dec);
+              }
             }
           }
         }
@@ -95,8 +109,14 @@ function ensureCacheLoaded(): Map<string, string> {
     const rows = db.prepare('SELECT key, value FROM server_settings').all() as Array<{ key: string; value: string }>;
     for (const row of rows) {
       if (row.value && row.value.trim() !== '') {
+        const dec = decryptSecret(row.value.trim());
+        if (isCorruptedSecretMask(row.key, dec)) {
+          // Nettoyer la valeur masquée corrompue de SQLite
+          db.prepare('DELETE FROM server_settings WHERE key = ?').run(row.key);
+          continue;
+        }
         dbKeys.add(row.key);
-        settingsCache.set(row.key, decryptSecret(row.value.trim()));
+        settingsCache.set(row.key, dec);
       }
     }
 
@@ -171,7 +191,11 @@ export function ensureJwtSecret(): string {
  * Persist a setting in SQLite + JSON backup and update the in-memory cache
  */
 export function setSetting(key: SettingKey, value: string): void {
-  const trimmed = value.trim();
+  const cleaned = SECRET_KEYS.has(key) ? value.replace(/•+/g, '').trim() : value.trim();
+  if (SECRET_KEYS.has(key) && isCorruptedSecretMask(key, cleaned)) {
+    return;
+  }
+  const trimmed = cleaned;
   const toStore = SECRET_KEYS.has(key) ? encryptSecret(trimmed) : trimmed;
 
   const stmt = db.prepare(`

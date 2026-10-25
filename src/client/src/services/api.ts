@@ -377,10 +377,13 @@ export const api = {
       method: 'PUT',
       body: JSON.stringify(updates),
     }),
-  testService: (service: 'tmdb' | 'seer' | 'sonarr' | 'radarr' | 'ldap' | 'jellyfin') =>
+  testService: (
+    service: 'tmdb' | 'seer' | 'sonarr' | 'radarr' | 'ldap' | 'jellyfin',
+    settings?: Record<string, string>
+  ) =>
     request<{ success: boolean; message: string }>('/settings/test', {
       method: 'POST',
-      body: JSON.stringify({ service }),
+      body: JSON.stringify({ service, settings }),
     }),
 
   // ==================== USERS (ADMIN) ====================
