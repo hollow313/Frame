@@ -142,6 +142,9 @@ export interface WatchlistItem {
   };
   series_status?: string;
   seasons_count?: number;
+  total_episodes?: number;
+  watchedEpisodesCount?: number;
+  nextEpisode?: { seasonNumber: number; episodeNumber: number } | null;
 }
 
 export interface RecommendationSection {

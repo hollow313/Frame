@@ -76,7 +76,7 @@ export class ArrService {
   /**
    * Rechercher une série dans Sonarr par titre ou lookup (correspondance stricte)
    */
-  public static async checkSonarrSeries(title: string, tvdbId?: number): Promise<ArrMediaStatus> {
+  public static async checkSonarrSeries(title: string, tvdbId?: number, year?: number): Promise<ArrMediaStatus> {
     if (!this.isSonarrConfigured() || !title) {
       return { inLibrary: false, downloaded: false, monitored: false };
     }
@@ -97,8 +97,16 @@ export class ArrService {
 
       const normalizedTarget = cleanTitle(title);
 
-      // Trouver la série correspondante strictement
+      // Trouver la série correspondante strictement (tvdbId > titre + année > titre)
       let found = results.find((r) => tvdbId && r.tvdbId === tvdbId);
+      if (!found && year) {
+        found = results.find((r) => {
+          const tNorm = r.title ? cleanTitle(r.title) : '';
+          const origNorm = r.originalTitle ? cleanTitle(r.originalTitle) : '';
+          const yearMatch = r.year === year || (r.firstAired && new Date(r.firstAired).getFullYear() === year);
+          return yearMatch && ((tNorm.length > 0 && tNorm === normalizedTarget) || (origNorm.length > 0 && origNorm === normalizedTarget));
+        });
+      }
       if (!found) {
         found = results.find((r) => {
           const tNorm = r.title ? cleanTitle(r.title) : '';
@@ -285,8 +293,8 @@ export class ArrService {
     return { connected: r.success, version: r.version, error: r.success ? undefined : r.message };
   }
 
-  public static async checkSeriesStatus(tvdbId?: number, title?: string): Promise<ArrMediaStatus> {
-    return this.checkSonarrSeries(title || '', tvdbId);
+  public static async checkSeriesStatus(tvdbId?: number, title?: string, year?: number): Promise<ArrMediaStatus> {
+    return this.checkSonarrSeries(title || '', tvdbId, year);
   }
 
   public static async checkMovieStatus(tmdbId: number): Promise<ArrMediaStatus> {

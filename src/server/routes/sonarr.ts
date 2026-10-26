@@ -30,7 +30,8 @@ router.get('/check/series', async (req: AuthenticatedRequest, res: Response) => 
   try {
     const title = req.query.title as string;
     const tvdbId = req.query.tvdbId ? parseInt(req.query.tvdbId as string, 10) : undefined;
-    const status = await SonarrService.checkSeriesStatus(tvdbId, title);
+    const year = req.query.year ? parseInt(req.query.year as string, 10) : undefined;
+    const status = await SonarrService.checkSeriesStatus(tvdbId, title, year);
     res.json(status);
   } catch (err: any) {
     serverError(res, err, 'SonarrCheckSeries');

@@ -15,7 +15,8 @@ import {
   ChevronDown,
   ChevronUp,
   CheckCircle2,
-  CalendarDays
+  CalendarDays,
+  Play
 } from 'lucide-react';
 import { MediaItem, WatchlistItem } from '../types';
 import { api } from '../services/api';
@@ -78,6 +79,7 @@ export const Calendar: React.FC<CalendarProps> = ({
 
   const [items, setItems] = useState<MediaItem[]>([]);
   const [noScheduleWatchlist, setNoScheduleWatchlist] = useState<WatchlistItem[]>([]);
+  const [inProgressWatchlist, setInProgressWatchlist] = useState<WatchlistItem[]>([]);
   const [pastWatchlist, setPastWatchlist] = useState<MediaItem[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
 
@@ -140,9 +142,14 @@ export const Calendar: React.FC<CalendarProps> = ({
           const inRange: MediaItem[] = [];
           const past: MediaItem[] = [];
           const noSchedule: WatchlistItem[] = [];
+          const inProgress: WatchlistItem[] = [];
 
           wl.forEach((item) => {
             if (item.media_type === 'tv') {
+              if ((item.watchedEpisodesCount ?? 0) > 0) {
+                inProgress.push(item);
+              }
+
               const ep = item.next_episode_to_air;
               if (ep && ep.air_date) {
                 // La série a un épisode à venir programmé
@@ -206,16 +213,19 @@ export const Calendar: React.FC<CalendarProps> = ({
 
           setItems(inRange);
           setPastWatchlist(past);
+          setInProgressWatchlist(inProgress);
           setNoScheduleWatchlist(noSchedule);
         } else {
           setItems([]);
           setPastWatchlist([]);
+          setInProgressWatchlist([]);
           setNoScheduleWatchlist([]);
         }
       } else {
         const res = await api.getUpcomingMedia(filterType, 1, startDate, endDate);
         setItems(res.results || []);
         setPastWatchlist([]);
+        setInProgressWatchlist([]);
         setNoScheduleWatchlist([]);
       }
     } catch (err) {
@@ -485,6 +495,74 @@ export const Calendar: React.FC<CalendarProps> = ({
         </div>
       </div>
 
+      {/* SECTION SPÉCIALE WATCHLIST : SÉRIES EN COURS DE VISIONNAGE (PROCHAINS ÉPISODES) */}
+      {filterType === 'watchlist' && inProgressWatchlist.length > 0 && (
+        <div className="p-4 sm:p-5 rounded-2xl bg-gradient-to-br from-primary-950/40 via-dark-900 to-dark-900 border border-primary-500/30 space-y-3 shadow-xl">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Play className="w-4 h-4 text-primary-400 fill-primary-400" />
+              <h2 className="text-sm sm:text-base font-extrabold text-white tracking-wide">
+                Vos séries en cours (prochains épisodes à voir)
+              </h2>
+              <span className="text-xs font-bold text-primary-400 bg-primary-500/15 px-2 py-0.5 rounded-full border border-primary-500/30">
+                {inProgressWatchlist.length} en cours
+              </span>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 pt-1">
+            {inProgressWatchlist.map((item) => (
+              <div
+                key={`inprogress-${item.id}`}
+                onClick={() => onSelectMedia({
+                  id: item.tmdb_id,
+                  media_type: item.media_type,
+                  title: item.title,
+                  overview: item.overview || '',
+                  poster_path: item.poster_path,
+                  backdrop_path: item.backdrop_path,
+                  release_date: item.release_date || undefined,
+                  vote_average: 0,
+                  vote_count: 0,
+                  genres: item.genres,
+                  inWatchlist: true,
+                })}
+                className="p-3 rounded-xl bg-dark-850/90 border border-white/5 hover:border-primary-500/40 transition-all flex items-center gap-3 cursor-pointer group shadow hover:scale-[1.01]"
+              >
+                {item.poster_path ? (
+                  <img src={item.poster_path} alt={item.title} className="w-12 h-16 rounded-lg object-cover shrink-0 group-hover:scale-105 transition-transform" />
+                ) : (
+                  <div className="w-12 h-16 rounded-lg bg-dark-800 flex items-center justify-center text-slate-600 shrink-0">
+                    <Tv className="w-5 h-5" />
+                  </div>
+                )}
+
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-1.5 mb-1">
+                    <span className="text-[9px] font-black uppercase px-1.5 py-0.2 rounded bg-emerald-500/15 text-emerald-300">
+                      {item.watchedEpisodesCount} ép. vus
+                    </span>
+                    {item.seasons_count ? (
+                      <span className="text-[9px] text-slate-500 font-medium">
+                        • {item.seasons_count} saisons
+                      </span>
+                    ) : null}
+                  </div>
+                  <h4 className="text-xs sm:text-sm font-bold text-white truncate group-hover:text-primary-300 transition-colors">
+                    {item.title}
+                  </h4>
+                  {item.nextEpisode && (
+                    <div className="flex items-center gap-1.5 mt-1 text-[11px] font-bold text-primary-400 bg-primary-600/10 px-2 py-0.5 rounded-md w-fit border border-primary-500/20">
+                      <span>▶ Prochain : S{item.nextEpisode.seasonNumber}E{item.nextEpisode.episodeNumber}</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Contenu principal : Grille multi-semaines */}
       {loading ? (
         <div className="h-80 flex items-center justify-center">
@@ -700,10 +778,20 @@ export const Calendar: React.FC<CalendarProps> = ({
                             ? (item.seasons_count ? `Terminée (${item.seasons_count} saisons)` : 'Série terminée')
                             : 'En pause / Attente'}
                         </span>
+                        {item.watchedEpisodesCount && item.watchedEpisodesCount > 0 ? (
+                          <span className="text-[9px] font-bold text-emerald-400 bg-emerald-500/10 px-1.5 py-0.2 rounded">
+                            {item.watchedEpisodesCount} vus
+                          </span>
+                        ) : null}
                       </div>
                       <h4 className="text-xs font-bold text-white truncate group-hover:text-amber-400 transition-colors">
                         {item.title}
                       </h4>
+                      {item.nextEpisode && (
+                        <p className="text-[11px] font-semibold text-primary-400 truncate mt-0.5">
+                          ▶ Prochain : S{item.nextEpisode.seasonNumber}E{item.nextEpisode.episodeNumber}
+                        </p>
+                      )}
                       {item.genres && item.genres.length > 0 && (
                         <p className="text-[10px] text-slate-400 truncate mt-0.5">
                           {item.genres.slice(0, 2).map((g) => g.name).join(' • ')}

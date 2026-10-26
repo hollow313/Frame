@@ -408,6 +408,15 @@ export const MediaModal: React.FC<MediaModalProps> = ({
     }
   }, [isOpen, id, mediaType]);
 
+  useEffect(() => {
+    if (!isOpen) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isOpen, onClose]);
+
   const loadSeasonEpisodes = async (tvId: number, seasonNumber: number) => {
     setLoadingSeason(true);
     try {
@@ -428,17 +437,39 @@ export const MediaModal: React.FC<MediaModalProps> = ({
       const details = await api.getMediaDetails(apiType, id);
       setItem(details);
 
-      // Si c'est une série, charger automatiquement la première saison valide et les épisodes vus
+      // Si c'est une série, charger automatiquement la saison active et les épisodes vus
       if (apiType === 'tv') {
-        const firstSeason = details.seasons?.find((s) => s.season_number > 0)?.season_number || 1;
+        const validSeasons = (details.seasons || []).filter((s) => s.season_number > 0);
+        const firstSeason = validSeasons[0]?.season_number || 1;
         setSelectedSeason(firstSeason);
         loadSeasonEpisodes(details.id, firstSeason);
+
         api.getWatchedEpisodes(details.id)
           .then((res) => {
             const keys = new Set<string>(
               (res.episodes || []).map((ep: any) => `${ep.seasonNumber ?? ep.season_number}:${ep.episodeNumber ?? ep.episode_number}`)
             );
             setWatchedEpisodeKeys(keys);
+
+            // Trouver la première saison contenant des épisodes non encore vus
+            if (validSeasons.length > 0) {
+              for (const s of validSeasons) {
+                let watchedInSeason = 0;
+                for (let epNum = 1; epNum <= (s.episode_count || 0); epNum++) {
+                  if (keys.has(`${s.season_number}:${epNum}`)) {
+                    watchedInSeason++;
+                  }
+                }
+                // Dès qu'une saison a des épisodes non vus, basculer immédiatement dessus
+                if (watchedInSeason < (s.episode_count || 1)) {
+                  if (s.season_number !== firstSeason) {
+                    setSelectedSeason(s.season_number);
+                    loadSeasonEpisodes(details.id, s.season_number);
+                  }
+                  break;
+                }
+              }
+            }
           })
           .catch(() => setWatchedEpisodeKeys(new Set()));
       }
@@ -451,13 +482,13 @@ export const MediaModal: React.FC<MediaModalProps> = ({
       const releaseYear = details.release_date ? new Date(details.release_date).getFullYear() : undefined;
       const tvdbId = (details as any).external_ids?.tvdb_id;
 
-      // Charger le statut Sonarr / Radarr
+      // Charger le statut Sonarr / Radarr (avec année pour éviter de matcher un reboot futur)
       if (apiType === 'movie') {
         api.checkRadarrMovie(id)
           .then((res) => setArrStatus(res))
           .catch(() => {});
       } else {
-        api.checkSonarrSeries(details.title, tvdbId)
+        api.checkSonarrSeries(details.title, tvdbId, releaseYear)
           .then((res) => setArrStatus(res))
           .catch(() => {});
       }
@@ -602,7 +633,10 @@ export const MediaModal: React.FC<MediaModalProps> = ({
   );
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 md:p-6 bg-dark-950/85 backdrop-blur-md overflow-y-auto">
+    <div 
+      className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 md:p-6 bg-dark-950/85 backdrop-blur-md overflow-y-auto"
+      onClick={onClose}
+    >
       <div 
         className="relative w-full max-w-4xl bg-dark-900 border border-white/10 rounded-2xl shadow-2xl overflow-hidden my-auto animate-in fade-in zoom-in-95 duration-200"
         onClick={(e) => e.stopPropagation()}
@@ -985,6 +1019,48 @@ export const MediaModal: React.FC<MediaModalProps> = ({
                         >
                           <Check className="w-3.5 h-3.5" />
                           <span>{allSeasonWatched ? 'Décocher la saison' : 'Tout marquer vu'}</span>
+                        </button>
+                      </div>
+                    );
+                  })()}
+
+                  {/* Prochain épisode à regarder de la saison */}
+                  {!loadingSeason && (() => {
+                    const nextUnwatchedEp = seasonEpisodes.find(
+                      (ep) => !watchedEpisodeKeys.has(`${selectedSeason}:${ep.episode_number}`)
+                    );
+                    if (!nextUnwatchedEp) return null;
+                    return (
+                      <div className="p-3.5 rounded-xl bg-gradient-to-r from-primary-950/60 to-dark-850 border border-primary-500/40 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-lg animate-in fade-in">
+                        <div className="flex items-center gap-3 min-w-0">
+                          <div className="w-8 h-8 rounded-xl bg-primary-600/30 border border-primary-500/40 flex items-center justify-center shrink-0">
+                            <Play className="w-4 h-4 text-primary-400 fill-primary-400 translate-x-0.5" />
+                          </div>
+                          <div className="min-w-0">
+                            <span className="text-[10px] uppercase font-bold tracking-wider text-primary-400">
+                              Prochain épisode à voir
+                            </span>
+                            <h4 className="text-xs sm:text-sm font-bold text-white truncate">
+                              Épisode {nextUnwatchedEp.episode_number} {nextUnwatchedEp.name ? `• ${nextUnwatchedEp.name}` : ''}
+                            </h4>
+                            <div className="flex items-center gap-2 text-[11px] text-slate-400">
+                              {nextUnwatchedEp.air_date && (
+                                <span>Diffusé le {new Date(nextUnwatchedEp.air_date).toLocaleDateString('fr-FR')}</span>
+                              )}
+                              {nextUnwatchedEp.runtime && (
+                                <span>• {nextUnwatchedEp.runtime} min</span>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={() => handleToggleEpisodeWatched(nextUnwatchedEp)}
+                          className="px-3.5 py-1.5 rounded-xl bg-primary-600 hover:bg-primary-500 text-white text-xs font-bold shadow-glow flex items-center justify-center gap-1.5 shrink-0 transition-all hover:scale-105"
+                        >
+                          <Check className="w-3.5 h-3.5" />
+                          <span>Marquer vu</span>
                         </button>
                       </div>
                     );

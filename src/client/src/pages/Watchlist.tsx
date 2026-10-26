@@ -162,14 +162,46 @@ export const Watchlist: React.FC<WatchlistProps> = ({
                 </div>
               </div>
 
-              <div className="p-3">
+              <div className="p-3 space-y-1.5">
                 <h3 className="text-sm font-semibold text-slate-200 truncate group-hover:text-primary-400 transition-colors">
                   {item.title}
                 </h3>
-                <div className="flex items-center justify-between text-xs text-slate-400 mt-0.5">
-                  <span>{item.media_type === 'movie' ? 'Film' : 'Série'}</span>
+                <div className="flex items-center justify-between text-xs text-slate-400">
+                  <span className={`uppercase text-[10px] font-bold px-1.5 py-0.5 rounded ${
+                    item.media_type === 'manga'
+                      ? 'bg-pink-500/20 text-pink-300'
+                      : item.isAnime
+                      ? 'bg-amber-500/20 text-amber-300'
+                      : 'bg-dark-800 text-slate-300'
+                  }`}>
+                    {item.media_type === 'movie' ? 'Film' : item.isAnime ? 'Animé' : item.media_type === 'manga' ? 'Manga' : 'Série'}
+                  </span>
                   {item.release_date && <span>{new Date(item.release_date).getFullYear()}</span>}
                 </div>
+
+                {/* Prochain épisode pour les séries TV et mangas */}
+                {item.media_type === 'tv' && (
+                  <div className="pt-1.5 border-t border-white/5 space-y-1">
+                    {item.watchedEpisodesCount && item.watchedEpisodesCount > 0 ? (
+                      <div className="flex items-center justify-between text-[11px]">
+                        <span className="font-bold text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded">
+                          {item.nextEpisode ? `Prochain : S${item.nextEpisode.seasonNumber}E${item.nextEpisode.episodeNumber}` : 'En cours'}
+                        </span>
+                        <span className="text-slate-400 font-mono text-[10px]">
+                          {item.watchedEpisodesCount} vus
+                        </span>
+                      </div>
+                    ) : item.next_episode_to_air ? (
+                      <div className="text-[11px] text-amber-300 bg-amber-500/10 px-1.5 py-0.5 rounded font-medium truncate" title={`S${item.next_episode_to_air.season_number}E${item.next_episode_to_air.episode_number}`}>
+                        📅 Prochain : S{item.next_episode_to_air.season_number}E{item.next_episode_to_air.episode_number}
+                      </div>
+                    ) : (
+                      <div className="text-[10px] text-slate-400 bg-dark-850 px-1.5 py-0.5 rounded">
+                        {item.nextEpisode ? `À débuter : S${item.nextEpisode.seasonNumber}E${item.nextEpisode.episodeNumber}` : 'À regarder'}
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             </div>
           ))}

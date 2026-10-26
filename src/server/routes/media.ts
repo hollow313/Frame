@@ -978,8 +978,41 @@ router.get('/watchlist', async (req: AuthenticatedRequest, res: Response) => {
     query += ' ORDER BY added_at DESC, id DESC';
     const rows = db.prepare(query).all(...params) as any[];
 
+    // Récupérer les compteurs d'épisodes vus par série pour cet utilisateur
+    const epStatsRows = db
+      .prepare(`
+        SELECT tmdb_id,
+               COUNT(*) as ep_count,
+               MAX(season_number * 10000 + episode_number) as last_ep_code,
+               MAX(watched_at) as last_watched_at
+        FROM watched_items
+        WHERE user_id = ? AND media_type = 'tv' AND (season_number > 0 OR episode_number > 0)
+        GROUP BY tmdb_id
+      `)
+      .all(req.user!.id) as Array<{
+      tmdb_id: number;
+      ep_count: number;
+      last_ep_code: number;
+      last_watched_at: string;
+    }>;
+
+    const epStatsMap = new Map<
+      number,
+      { watchedEpisodesCount: number; lastSeason: number; lastEpisode: number; lastWatchedAt: string }
+    >();
+    for (const r of epStatsRows) {
+      const lastSeason = Math.floor((r.last_ep_code || 0) / 10000);
+      const lastEpisode = (r.last_ep_code || 0) % 10000;
+      epStatsMap.set(r.tmdb_id, {
+        watchedEpisodesCount: r.ep_count,
+        lastSeason,
+        lastEpisode,
+        lastWatchedAt: r.last_watched_at,
+      });
+    }
+
     let enrichCount = 0;
-    const MAX_SYNC_ENRICH = 8;
+    const MAX_SYNC_ENRICH = 15;
 
     const formatted = await Promise.all(
       rows.map(async (r) => {
@@ -989,15 +1022,43 @@ router.get('/watchlist', async (req: AuthenticatedRequest, res: Response) => {
         let overview = r.overview;
         let parsedGenres = r.genres ? JSON.parse(r.genres) : [];
         let title = r.title;
+        let nextEpisodeToAir: any = null;
+        let seriesStatus: string | null = null;
+        let seasonsCount: number | null = null;
+        let totalEpisodes: number | null = null;
 
-        if ((!posterPath || hasCjkCharacters(title)) && r.media_type !== 'manga' && enrichCount < MAX_SYNC_ENRICH) {
+        // Tenter de charger le cache TMDB local en premier
+        const cacheRow = db
+          .prepare('SELECT data FROM tmdb_cache WHERE cache_key = ?')
+          .get(`tmdb_details_${r.media_type === 'manga' ? 'tv' : r.media_type}_${r.tmdb_id}`) as { data: string } | undefined;
+
+        if (cacheRow) {
+          try {
+            const cachedDetails = JSON.parse(cacheRow.data);
+            posterPath = cachedDetails.poster_path || posterPath;
+            backdropPath = cachedDetails.backdrop_path || backdropPath;
+            releaseDate = cachedDetails.release_date || releaseDate;
+            overview = cachedDetails.overview || overview;
+            nextEpisodeToAir = cachedDetails.next_episode_to_air || null;
+            seriesStatus = cachedDetails.status || null;
+            seasonsCount = cachedDetails.number_of_seasons || null;
+            totalEpisodes = cachedDetails.number_of_episodes || null;
+            if (parsedGenres.length === 0 && cachedDetails.genres) {
+              parsedGenres = cachedDetails.genres;
+            }
+          } catch {}
+        } else if ((!posterPath || hasCjkCharacters(title) || r.media_type === 'tv') && r.media_type !== 'manga' && enrichCount < MAX_SYNC_ENRICH) {
           enrichCount++;
           try {
             const details = await TMDBService.getDetails(r.media_type, r.tmdb_id);
-            posterPath = details.poster_path;
+            posterPath = details.poster_path || posterPath;
             backdropPath = details.backdrop_path || backdropPath;
             releaseDate = details.release_date || releaseDate;
             overview = details.overview || overview;
+            nextEpisodeToAir = details.next_episode_to_air || null;
+            seriesStatus = details.status || null;
+            seasonsCount = details.number_of_seasons || null;
+            totalEpisodes = details.number_of_episodes || null;
             if (parsedGenres.length === 0 && details.genres) {
               parsedGenres = details.genres;
             }
@@ -1028,6 +1089,16 @@ router.get('/watchlist', async (req: AuthenticatedRequest, res: Response) => {
           isManga ||
           parsedGenres.some((g: any) => g.id === 16 || g.name?.toLowerCase().includes('animation'));
 
+        const epInfo = r.media_type === 'tv' ? epStatsMap.get(r.tmdb_id) : undefined;
+        let nextEpisode: { seasonNumber: number; episodeNumber: number } | null = null;
+        if (r.media_type === 'tv') {
+          if (epInfo && epInfo.lastSeason > 0) {
+            nextEpisode = { seasonNumber: epInfo.lastSeason, episodeNumber: epInfo.lastEpisode + 1 };
+          } else {
+            nextEpisode = { seasonNumber: 1, episodeNumber: 1 };
+          }
+        }
+
         return {
           ...r,
           title,
@@ -1038,6 +1109,12 @@ router.get('/watchlist', async (req: AuthenticatedRequest, res: Response) => {
           genres: parsedGenres,
           isAnime,
           isManga,
+          watchedEpisodesCount: epInfo?.watchedEpisodesCount || 0,
+          nextEpisode,
+          next_episode_to_air: nextEpisodeToAir,
+          series_status: seriesStatus,
+          seasons_count: seasonsCount,
+          total_episodes: totalEpisodes,
         };
       })
     );

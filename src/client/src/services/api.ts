@@ -302,8 +302,8 @@ export const api = {
 
   // ==================== SONARR & RADARR ====================
   getArrStatus: () => request<{ sonarr: any; radarr: any }>('/sonarr/status'),
-  checkSonarrSeries: (title: string, tvdbId?: number) =>
-    request<ArrStatus>(`/sonarr/check/series?title=${encodeURIComponent(title)}${tvdbId ? `&tvdbId=${tvdbId}` : ''}`),
+  checkSonarrSeries: (title: string, tvdbId?: number, year?: number) =>
+    request<ArrStatus>(`/sonarr/check/series?title=${encodeURIComponent(title)}${tvdbId ? `&tvdbId=${tvdbId}` : ''}${year ? `&year=${year}` : ''}`),
   checkRadarrMovie: (tmdbId: number) => request<ArrStatus>(`/sonarr/check/movie/${tmdbId}`),
   syncSonarrUnmonitored: () =>
     request<{ success: boolean; importedShows: number; importedAnime: number; totalImported: number; titles: string[]; message: string }>(
